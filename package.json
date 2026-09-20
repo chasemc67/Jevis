@@ -1,0 +1,35 @@
+{
+  "name": "jevis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 microphone to directed-speech text queue harness",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx apps/speech-filter-harness/src/main.ts",
+    "start": "node dist/main.js",
+    "mic": "npm run dev -- --mode mic",
+    "stt": "npm run dev -- --mode mic --stt-only",
+    "fixture": "npm run dev -- --mode fixture",
+    "demo": "npm run fixture -- --dry-run",
+    "wav": "npm run dev -- --mode wav",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "build": "tsc",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.87",
+    "ai": "7.0.107",
+    "dotenv": "18.0.1",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "@types/ws": "8.18.1",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2"
+  }
+}

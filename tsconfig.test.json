@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "noEmit": true },
+  "include": ["apps/speech-filter-harness/src/**/*.ts", "tests/**/*.ts"]
+}

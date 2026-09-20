@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "name": "unclear",
+  "description": "Ambiguous speech. Scripted labels stay unclear and must emit zero segments.",
+  "durationMs": 3160,
+  "events": [
+    {
+      "atMs": 140,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 120,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 320,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          },
+          {
+            "text": "later",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 300,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 500,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later or",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          },
+          {
+            "text": "later",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": false
+          },
+          {
+            "text": "or",
+            "startMs": 360,
+            "endMs": 480,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 480,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 680,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later or perhaps",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          },
+          {
+            "text": "later",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": false
+          },
+          {
+            "text": "or",
+            "startMs": 360,
+            "endMs": 480,
+            "isFinal": false
+          },
+          {
+            "text": "perhaps",
+            "startMs": 540,
+            "endMs": 660,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 660,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 860,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later or perhaps tomorrow.",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": true
+          },
+          {
+            "text": "later",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": true
+          },
+          {
+            "text": "or",
+            "startMs": 360,
+            "endMs": 480,
+            "isFinal": true
+          },
+          {
+            "text": "perhaps",
+            "startMs": 540,
+            "endMs": 660,
+            "isFinal": true
+          },
+          {
+            "text": "tomorrow.",
+            "startMs": 720,
+            "endMs": 840,
+            "isFinal": true
+          }
+        ],
+        "startMs": 0,
+        "endMs": 840,
+        "isFinal": true,
+        "speechFinal": true
+      }
+    },
+    {
+      "atMs": 960,
+      "type": "boundary",
+      "reason": "fixture_utterance_end"
+    }
+  ],
+  "dryRun": {
+    "latencyMs": 30,
+    "rules": [
+      {
+        "text": "Maybe",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later or",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later or perhaps",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later or perhaps tomorrow.",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      }
+    ],
+    "defaultDecision": {
+      "addressing": "unclear",
+      "directedProbability": 0.3,
+      "ambientProbability": 0.3,
+      "isDirectedProbability": 0.4
+    }
+  }
+}

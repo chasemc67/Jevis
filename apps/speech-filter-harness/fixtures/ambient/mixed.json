@@ -1,0 +1,857 @@
+{
+  "version": 1,
+  "name": "mixed",
+  "description": "Three regions: ambient only, ambient prefix followed by a request to the assistant, then unclear. Scripted dry-run emits only \"Could you summarize my notes?\". Labels are a deterministic plumbing test, not Jev inference.",
+  "durationMs": 10660,
+  "events": [
+    {
+      "atMs": 140,
+      "type": "transcript",
+      "event": {
+        "text": "The",
+        "words": [
+          {
+            "text": "The",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 120,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 320,
+      "type": "transcript",
+      "event": {
+        "text": "The television",
+        "words": [
+          {
+            "text": "The",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          },
+          {
+            "text": "television",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 300,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 500,
+      "type": "transcript",
+      "event": {
+        "text": "The television is",
+        "words": [
+          {
+            "text": "The",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          },
+          {
+            "text": "television",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": false
+          },
+          {
+            "text": "is",
+            "startMs": 360,
+            "endMs": 480,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 480,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 680,
+      "type": "transcript",
+      "event": {
+        "text": "The television is still",
+        "words": [
+          {
+            "text": "The",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": false
+          },
+          {
+            "text": "television",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": false
+          },
+          {
+            "text": "is",
+            "startMs": 360,
+            "endMs": 480,
+            "isFinal": false
+          },
+          {
+            "text": "still",
+            "startMs": 540,
+            "endMs": 660,
+            "isFinal": false
+          }
+        ],
+        "startMs": 0,
+        "endMs": 660,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 860,
+      "type": "transcript",
+      "event": {
+        "text": "The television is still playing.",
+        "words": [
+          {
+            "text": "The",
+            "startMs": 0,
+            "endMs": 120,
+            "isFinal": true
+          },
+          {
+            "text": "television",
+            "startMs": 180,
+            "endMs": 300,
+            "isFinal": true
+          },
+          {
+            "text": "is",
+            "startMs": 360,
+            "endMs": 480,
+            "isFinal": true
+          },
+          {
+            "text": "still",
+            "startMs": 540,
+            "endMs": 660,
+            "isFinal": true
+          },
+          {
+            "text": "playing.",
+            "startMs": 720,
+            "endMs": 840,
+            "isFinal": true
+          }
+        ],
+        "startMs": 0,
+        "endMs": 840,
+        "isFinal": true,
+        "speechFinal": true
+      }
+    },
+    {
+      "atMs": 1000,
+      "type": "boundary",
+      "reason": "fixture_utterance_end"
+    },
+    {
+      "atMs": 3340,
+      "type": "transcript",
+      "event": {
+        "text": "We",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 3320,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 3520,
+      "type": "transcript",
+      "event": {
+        "text": "We already",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 3500,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 3700,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 3680,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 3880,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate dinner.",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": false
+          },
+          {
+            "text": "dinner.",
+            "startMs": 3740,
+            "endMs": 3860,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 3860,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 4060,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate dinner. Could",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": false
+          },
+          {
+            "text": "dinner.",
+            "startMs": 3740,
+            "endMs": 3860,
+            "isFinal": false
+          },
+          {
+            "text": "Could",
+            "startMs": 3920,
+            "endMs": 4040,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 4040,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 4240,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate dinner. Could you",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": false
+          },
+          {
+            "text": "dinner.",
+            "startMs": 3740,
+            "endMs": 3860,
+            "isFinal": false
+          },
+          {
+            "text": "Could",
+            "startMs": 3920,
+            "endMs": 4040,
+            "isFinal": false
+          },
+          {
+            "text": "you",
+            "startMs": 4100,
+            "endMs": 4220,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 4220,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 4420,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate dinner. Could you summarize",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": false
+          },
+          {
+            "text": "dinner.",
+            "startMs": 3740,
+            "endMs": 3860,
+            "isFinal": false
+          },
+          {
+            "text": "Could",
+            "startMs": 3920,
+            "endMs": 4040,
+            "isFinal": false
+          },
+          {
+            "text": "you",
+            "startMs": 4100,
+            "endMs": 4220,
+            "isFinal": false
+          },
+          {
+            "text": "summarize",
+            "startMs": 4280,
+            "endMs": 4400,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 4400,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 4600,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate dinner. Could you summarize my",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": false
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": false
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": false
+          },
+          {
+            "text": "dinner.",
+            "startMs": 3740,
+            "endMs": 3860,
+            "isFinal": false
+          },
+          {
+            "text": "Could",
+            "startMs": 3920,
+            "endMs": 4040,
+            "isFinal": false
+          },
+          {
+            "text": "you",
+            "startMs": 4100,
+            "endMs": 4220,
+            "isFinal": false
+          },
+          {
+            "text": "summarize",
+            "startMs": 4280,
+            "endMs": 4400,
+            "isFinal": false
+          },
+          {
+            "text": "my",
+            "startMs": 4460,
+            "endMs": 4580,
+            "isFinal": false
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 4580,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 4780,
+      "type": "transcript",
+      "event": {
+        "text": "We already ate dinner. Could you summarize my notes?",
+        "words": [
+          {
+            "text": "We",
+            "startMs": 3200,
+            "endMs": 3320,
+            "isFinal": true
+          },
+          {
+            "text": "already",
+            "startMs": 3380,
+            "endMs": 3500,
+            "isFinal": true
+          },
+          {
+            "text": "ate",
+            "startMs": 3560,
+            "endMs": 3680,
+            "isFinal": true
+          },
+          {
+            "text": "dinner.",
+            "startMs": 3740,
+            "endMs": 3860,
+            "isFinal": true
+          },
+          {
+            "text": "Could",
+            "startMs": 3920,
+            "endMs": 4040,
+            "isFinal": true
+          },
+          {
+            "text": "you",
+            "startMs": 4100,
+            "endMs": 4220,
+            "isFinal": true
+          },
+          {
+            "text": "summarize",
+            "startMs": 4280,
+            "endMs": 4400,
+            "isFinal": true
+          },
+          {
+            "text": "my",
+            "startMs": 4460,
+            "endMs": 4580,
+            "isFinal": true
+          },
+          {
+            "text": "notes?",
+            "startMs": 4640,
+            "endMs": 4760,
+            "isFinal": true
+          }
+        ],
+        "startMs": 3200,
+        "endMs": 4760,
+        "isFinal": true,
+        "speechFinal": true
+      }
+    },
+    {
+      "atMs": 5200,
+      "type": "boundary",
+      "reason": "fixture_utterance_end"
+    },
+    {
+      "atMs": 7640,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 7500,
+            "endMs": 7620,
+            "isFinal": false
+          }
+        ],
+        "startMs": 7500,
+        "endMs": 7620,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 7820,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 7500,
+            "endMs": 7620,
+            "isFinal": false
+          },
+          {
+            "text": "later",
+            "startMs": 7680,
+            "endMs": 7800,
+            "isFinal": false
+          }
+        ],
+        "startMs": 7500,
+        "endMs": 7800,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 8000,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later or",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 7500,
+            "endMs": 7620,
+            "isFinal": false
+          },
+          {
+            "text": "later",
+            "startMs": 7680,
+            "endMs": 7800,
+            "isFinal": false
+          },
+          {
+            "text": "or",
+            "startMs": 7860,
+            "endMs": 7980,
+            "isFinal": false
+          }
+        ],
+        "startMs": 7500,
+        "endMs": 7980,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 8180,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later or perhaps",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 7500,
+            "endMs": 7620,
+            "isFinal": false
+          },
+          {
+            "text": "later",
+            "startMs": 7680,
+            "endMs": 7800,
+            "isFinal": false
+          },
+          {
+            "text": "or",
+            "startMs": 7860,
+            "endMs": 7980,
+            "isFinal": false
+          },
+          {
+            "text": "perhaps",
+            "startMs": 8040,
+            "endMs": 8160,
+            "isFinal": false
+          }
+        ],
+        "startMs": 7500,
+        "endMs": 8160,
+        "isFinal": false,
+        "speechFinal": false
+      }
+    },
+    {
+      "atMs": 8360,
+      "type": "transcript",
+      "event": {
+        "text": "Maybe later or perhaps tomorrow.",
+        "words": [
+          {
+            "text": "Maybe",
+            "startMs": 7500,
+            "endMs": 7620,
+            "isFinal": true
+          },
+          {
+            "text": "later",
+            "startMs": 7680,
+            "endMs": 7800,
+            "isFinal": true
+          },
+          {
+            "text": "or",
+            "startMs": 7860,
+            "endMs": 7980,
+            "isFinal": true
+          },
+          {
+            "text": "perhaps",
+            "startMs": 8040,
+            "endMs": 8160,
+            "isFinal": true
+          },
+          {
+            "text": "tomorrow.",
+            "startMs": 8220,
+            "endMs": 8340,
+            "isFinal": true
+          }
+        ],
+        "startMs": 7500,
+        "endMs": 8340,
+        "isFinal": true,
+        "speechFinal": true
+      }
+    },
+    {
+      "atMs": 8460,
+      "type": "boundary",
+      "reason": "fixture_utterance_end"
+    }
+  ],
+  "dryRun": {
+    "latencyMs": 30,
+    "rules": [
+      {
+        "text": "The",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "The television",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "The television is",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "The television is still",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "The television is still playing.",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "We",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "We already",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "We already ate",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "We already ate dinner.",
+        "addressing": "ambient",
+        "directedProbability": 0.02,
+        "ambientProbability": 0.96,
+        "isDirectedProbability": 0.03
+      },
+      {
+        "text": "Could you",
+        "addressing": "directed",
+        "directedProbability": 0.96,
+        "ambientProbability": 0.02,
+        "isDirectedProbability": 0.97
+      },
+      {
+        "text": "Could you summarize",
+        "addressing": "directed",
+        "directedProbability": 0.96,
+        "ambientProbability": 0.02,
+        "isDirectedProbability": 0.97
+      },
+      {
+        "text": "Could you summarize my",
+        "addressing": "directed",
+        "directedProbability": 0.96,
+        "ambientProbability": 0.02,
+        "isDirectedProbability": 0.97
+      },
+      {
+        "text": "Could you summarize my notes?",
+        "addressing": "directed",
+        "directedProbability": 0.96,
+        "ambientProbability": 0.02,
+        "isDirectedProbability": 0.97
+      },
+      {
+        "text": "Maybe",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later or",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later or perhaps",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      },
+      {
+        "text": "Maybe later or perhaps tomorrow.",
+        "addressing": "unclear",
+        "directedProbability": 0.3,
+        "ambientProbability": 0.3,
+        "isDirectedProbability": 0.4
+      }
+    ],
+    "defaultDecision": {
+      "addressing": "unclear",
+      "directedProbability": 0.3,
+      "ambientProbability": 0.3,
+      "isDirectedProbability": 0.4
+    }
+  }
+}
