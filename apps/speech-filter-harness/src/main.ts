@@ -9,8 +9,10 @@ import { FixtureJevEvaluator, loadFixture, replayFixture } from './fixtures/repl
 import { GatewayJevClient } from './jev/client.js';
 import { SoxAudioSource } from './mic/sox.js';
 import { DeepgramStt } from './stt/deepgram.js';
+import { GatewayStt } from './stt/gateway.js';
+import { SttSession } from './stt/session.js';
 import type { Log, SttCallbacks } from './stt/types.js';
-import { startUiServer } from './ui/server.js';
+import { startUiServer, type UiSessionControls } from './ui/server.js';
 
 const help = `Jevis Phase 0 — always-on speech to a filtered text feed
 
@@ -19,6 +21,7 @@ Usage: npm run dev -- [options]
   --file PATH             WAV or word-event JSON file
   --dry-run               Fixture only: scripted classifier, no keys/cloud
   --stt-only              Print STT without Jev or downstream submission
+  --stt-model MODEL       openai/gpt-realtime-whisper (default) or xai/grok-stt
   --speed NUMBER          Fixture event playback speed (default: 1)
   --downstream console|queue  Visible console sink or bounded memory queue
   --ui                    Serve the local visual UI; click Start to run input
@@ -33,8 +36,8 @@ Examples:
   npm run stt
   npm run mic
 
-Live audio requires Homebrew SoX and DEEPGRAM_API_KEY. Jev requires
-AI_GATEWAY_API_KEY. Copy .env.example to .env and fill in keys locally.
+Live STT and Jev use AI_GATEWAY_API_KEY. Audio modes require Homebrew SoX.
+Copy .env.example to .env and fill in the key locally. Deepgram is optional.
 Always-on audio includes ambient speech; Ctrl-C stops capture and discards
 pending segments. No agent or tools run in Phase 0.
 `;
@@ -45,6 +48,7 @@ async function main(): Promise<void> {
       mode: { type: 'string', default: 'mic' }, file: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       'stt-only': { type: 'boolean', default: false },
+      'stt-model': { type: 'string' },
       speed: { type: 'string', default: '1' },
       downstream: { type: 'string', default: 'console' },
       ui: { type: 'boolean', default: false },
@@ -55,7 +59,10 @@ async function main(): Promise<void> {
   });
   if (values.help) { console.log(help); return; }
   loadEnv({ quiet: true });
-  const config = readConfig();
+  const config = readConfig({
+    ...process.env,
+    ...(values['stt-model'] ? { STT_MODEL: values['stt-model'], STT_PROVIDER: 'gateway' } : {}),
+  });
   const mode = values.mode;
   const dryRun = values['dry-run'];
   const sttOnly = values['stt-only'];
@@ -69,7 +76,7 @@ async function main(): Promise<void> {
   if (dryRun && sttOnly) throw new Error('Choose --dry-run or --stt-only, not both');
   if (mode === 'mic' && values.file) throw new Error('--file is only available in WAV or fixture mode');
   if (mode === 'wav' && !values.file) throw new Error('WAV mode requires --file path/to/audio.wav');
-  if (mode !== 'fixture' && !config.deepgramApiKey) throw new Error('Set DEEPGRAM_API_KEY in .env for live microphone or WAV streaming. Try npm run demo without keys.');
+  if (mode !== 'fixture' && config.sttProvider === 'gateway' && !config.gatewayApiKey) throw new Error('Set AI_GATEWAY_API_KEY in .env for Gateway microphone or WAV streaming and Jev. Try npm run demo without keys.');
   if (!sttOnly && !dryRun && !config.gatewayApiKey) throw new Error('Set AI_GATEWAY_API_KEY in .env for Jev via Vercel AI Gateway. Try npm run demo without keys.');
 
   const fixture = mode === 'fixture'
@@ -77,7 +84,7 @@ async function main(): Promise<void> {
   const classifier = sttOnly ? 'disabled' : dryRun ? 'SCRIPTED_FIXTURE_MOCK' : 'typesafe-ai/jev via Vercel AI Gateway';
   // Each UI replay gets a fresh filter, evaluator, downstream, and capture lifecycle.
   // Both interfaces run this same Phase 0 pipeline.
-  const run = async (signal: AbortSignal, log: Log): Promise<void> => {
+  const run = async (signal: AbortSignal, log: Log, controls?: UiSessionControls): Promise<void> => {
     signal.throwIfAborted();
     const downstream = values.downstream === 'queue' ? new MemoryQueueDownstream(log) : new ConsoleDownstream(log);
     const filter = sttOnly ? undefined : new SpeechFilter(config,
@@ -92,13 +99,14 @@ async function main(): Promise<void> {
       log,
     };
     let source: SoxAudioSource | undefined;
-    let stt: DeepgramStt | undefined;
+    let stt: SttSession | undefined;
+    let unsubscribeModel: (() => void) | undefined;
     let cleanupPromise: Promise<void> | undefined;
     const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
-      // Immediately revoke queued segments; stop audio before closing STT.
+      // Revoke queued segments and interrupt capture plus pending STT startup.
+      unsubscribeModel?.();
       filter?.onConnection(false);
-      await source?.stop();
-      await stt?.close();
+      await Promise.all([source?.stop(), stt?.close()]);
       await filter?.stop();
       if (stt) log('stt_counters', { ...stt.stats });
       if (downstream instanceof MemoryQueueDownstream) log('queue_summary', {
@@ -108,28 +116,34 @@ async function main(): Promise<void> {
     const onAbort = (): void => { void cleanup(); };
     signal.addEventListener('abort', onAbort, { once: true });
     log('harness_started', {
-      mode, classifier,
+      mode, classifier, sttProvider: mode === 'fixture' ? 'fixture' : config.sttProvider,
+      sttModel: controls?.sttModel ?? config.sttModel,
       downstream: values.downstream, debounceMs: config.debounceMs,
       everyNWords: config.everyNWords, windowMaxWords: config.windowMaxWords,
       directedThreshold: config.directedThreshold, booleanThreshold: config.booleanThreshold,
     });
     if (dryRun) log('dry_run_notice', { message: 'Scripted fixture labels test plumbing only; no Jev request or model accuracy validation.' });
     if (mode !== 'fixture') log('privacy_notice', {
-      message: 'Audio, including ambient speech, streams to Deepgram. Only transcript text goes to Jev via Gateway. Ctrl-C stops capture.',
+      message: `Audio, including ambient speech, streams to ${config.sttProvider === 'gateway' ? 'Vercel AI Gateway STT' : 'Deepgram'}. Transcript text goes to Jev via Gateway. Ctrl-C stops capture.`,
     });
     try {
       if (fixture) await replayFixture(fixture, callbacks, { signal, speed });
       else {
-        stt = new DeepgramStt({ apiKey: config.deepgramApiKey!, callbacks });
-        await stt.connect();
+        stt = new SttSession(callbacks, (model, adapterCallbacks) => config.sttProvider === 'gateway'
+          ? new GatewayStt({ apiKey: config.gatewayApiKey!, model, callbacks: adapterCallbacks })
+          : new DeepgramStt({ apiKey: config.deepgramApiKey!, callbacks: adapterCallbacks }));
+        if (config.sttProvider === 'gateway') unsubscribeModel = controls?.onSttModelChange(model => stt!.setModel(model));
+        await stt.setModel(controls?.sttModel ?? config.sttModel);
         if (signal.aborted) return;
         source = new SoxAudioSource({
           kind: mode as 'mic' | 'wav', wavPath: values.file,
           soxPath: config.soxPath, device: config.micDevice, debugAudio: config.debugAudio,
+          sampleRate: config.sttProvider === 'gateway' ? 24_000 : 16_000,
           onFrame: frame => { stt!.sendAudio(frame); }, log,
         });
         await source.start();
         await Promise.race([source.done, stt.done]);
+        unsubscribeModel?.();
         if (!signal.aborted && mode === 'wav') await stt.finalize();
       }
       if (!signal.aborted) await filter?.finish();
@@ -142,7 +156,10 @@ async function main(): Promise<void> {
   };
   const log = createTextFeed();
   if (values.ui) {
-    const ui = await startUiServer({ port, mode, classifier, log, run });
+    const ui = await startUiServer({
+      port, mode, classifier, log, run,
+      sttModel: config.sttModel, sttProvider: mode === 'fixture' ? 'fixture' : config.sttProvider,
+    });
     log('ui_listening', { url: ui.url, message: 'Open this URL, then click Run / Start. Ctrl+C closes the server.' });
     await new Promise<void>((resolve, reject) => {
       const onSignal = (): void => {

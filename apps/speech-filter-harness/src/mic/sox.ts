@@ -8,6 +8,7 @@ import type { Log } from '../stt/types.js';
 export const PCM_SAMPLE_RATE = 16_000;
 export const PCM_BYTES_PER_SECOND = PCM_SAMPLE_RATE * 2;
 export const PCM_FRAME_BYTES = 640; // 20 ms, signed 16-bit little-endian mono.
+export type PcmSampleRate = 16_000 | 24_000;
 
 export interface SoxAudioOptions {
   kind: 'mic' | 'wav';
@@ -15,16 +16,19 @@ export interface SoxAudioOptions {
   soxPath?: string;
   device?: string;
   debugAudio?: boolean;
+  sampleRate?: PcmSampleRate;
   onFrame(frame: Buffer): void;
   log: Log;
 }
 
-export function buildSoxArgs(options: Pick<SoxAudioOptions, 'kind' | 'wavPath' | 'device'>): string[] {
+export function buildSoxArgs(options: Pick<SoxAudioOptions, 'kind' | 'wavPath' | 'device' | 'sampleRate'>): string[] {
+  const sampleRate = options.sampleRate ?? PCM_SAMPLE_RATE;
+  const frameBytes = sampleRate * 2 * 0.02;
   const input = options.kind === 'wav'
     ? [resolve(options.wavPath ?? '')]
     : options.device ? ['-t', 'coreaudio', options.device] : ['-d'];
-  return ['-q', '--buffer', String(PCM_FRAME_BYTES), ...input,
-    '-t', 'raw', '-r', String(PCM_SAMPLE_RATE), '-e', 'signed-integer',
+  return ['-q', '--buffer', String(frameBytes), ...input,
+    '-t', 'raw', '-r', String(sampleRate), '-e', 'signed-integer',
     '-b', '16', '-c', '1', '-L', '-'];
 }
 
@@ -52,11 +56,18 @@ export class SoxAudioSource {
   private resolveDone!: () => void;
   private rejectDone!: (error: Error) => void;
   private process?: ChildProcess;
+  private processClosed?: Promise<void>;
   private stopped = false;
   private started = false;
   private readonly abort = new AbortController();
+  private readonly sampleRate: PcmSampleRate;
+  private readonly bytesPerSecond: number;
+  private readonly frameBytes: number;
 
   constructor(private readonly options: SoxAudioOptions) {
+    this.sampleRate = options.sampleRate ?? PCM_SAMPLE_RATE;
+    this.bytesPerSecond = this.sampleRate * 2;
+    this.frameBytes = this.bytesPerSecond * 0.02;
     this.done = new Promise((resolveDone, rejectDone) => {
       this.resolveDone = resolveDone;
       this.rejectDone = rejectDone;
@@ -68,10 +79,13 @@ export class SoxAudioSource {
   async start(): Promise<void> {
     if (this.started) throw new Error('Audio source can only be started once.');
     this.started = true;
+    if (this.stopped) return;
     if (this.options.kind === 'wav') {
       if (!this.options.wavPath) throw new Error('WAV mode requires a file path.');
       await access(this.options.wavPath, constants.R_OK);
     }
+    // stop() can run while WAV access is pending, before there is a child to kill.
+    if (this.stopped) return;
     const child = spawn(this.options.soxPath ?? 'sox', buildSoxArgs(this.options), {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -88,6 +102,7 @@ export class SoxAudioSource {
         else rejectClosed(soxFailure(this.options.kind, stderr.trim() || `exit ${code}, signal ${signal}`));
       });
     });
+    this.processClosed = closed;
     void closed.catch(() => {});
     const spawned = new Promise<void>((resolveSpawned, rejectSpawned) => {
       child.once('spawn', resolveSpawned);
@@ -95,7 +110,7 @@ export class SoxAudioSource {
     });
     void this.consume(child, closed).then(this.resolveDone, this.rejectDone);
     await spawned;
-    this.options.log('audio_started', { source: this.options.kind, sampleRate: PCM_SAMPLE_RATE, channels: 1 });
+    this.options.log('audio_started', { source: this.options.kind, sampleRate: this.sampleRate, channels: 1, frameMs: 20, frameBytes: this.frameBytes });
   }
 
   private async consume(child: ReturnType<typeof spawn>, closed: Promise<void>): Promise<void> {
@@ -115,7 +130,7 @@ export class SoxAudioSource {
       if (this.stopped) return;
       if (firstFrameAt === undefined) firstFrameAt = performance.now();
       if (this.options.kind === 'wav') {
-        const waitMs = firstFrameAt + sentBytes / PCM_BYTES_PER_SECOND * 1000 - performance.now();
+        const waitMs = firstFrameAt + sentBytes / this.bytesPerSecond * 1000 - performance.now();
         if (waitMs > 0) await delay(waitMs, undefined, { signal: this.abort.signal });
       }
       if (this.stopped) return;
@@ -133,9 +148,9 @@ export class SoxAudioSource {
         if (inputTimeout) clearTimeout(inputTimeout);
         if (this.stopped) break;
         pending = Buffer.concat([pending, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)]);
-        while (pending.length >= PCM_FRAME_BYTES && !this.stopped) {
-          await send(pending.subarray(0, PCM_FRAME_BYTES));
-          pending = pending.subarray(PCM_FRAME_BYTES);
+        while (pending.length >= this.frameBytes && !this.stopped) {
+          await send(pending.subarray(0, this.frameBytes));
+          pending = pending.subarray(this.frameBytes);
         }
       }
       if (pending.length % 2 !== 0 && !this.stopped) throw new Error('SoX produced an incomplete PCM sample.');
@@ -150,7 +165,7 @@ export class SoxAudioSource {
       }
     } finally {
       if (inputTimeout) clearTimeout(inputTimeout);
-      this.options.log('audio_stopped', { source: this.options.kind, audioMs: sentBytes / PCM_BYTES_PER_SECOND * 1000 });
+      this.options.log('audio_stopped', { source: this.options.kind, sampleRate: this.sampleRate, audioMs: sentBytes / this.bytesPerSecond * 1000 });
     }
   }
 
@@ -162,7 +177,9 @@ export class SoxAudioSource {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
     const timer = setTimeout(() => child.kill('SIGKILL'), 1500);
     timer.unref();
-    try { await this.done; } catch { /* Original caller receives the capture error. */ }
+    // Aborting a paced WAV delay may finish consume() before the child exits.
+    // Keep the escalation timer alive until the actual process has closed.
+    try { await Promise.allSettled([this.done, this.processClosed]); }
     finally { clearTimeout(timer); }
   }
 }

@@ -29,11 +29,15 @@ export const page = String.raw`<!doctype html>
     .header-status { display:flex; align-items:center; gap:9px; color:var(--muted); font-size:12px; }
     .dot { display:inline-block; height:7px; width:7px; border-radius:50%; background:var(--muted); }
     .dot.active { background:var(--mint); box-shadow:0 0 0 4px #9be2be12; }
-    .toolbar { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:15px 18px; border:1px solid var(--line); border-radius:10px; background:#141c20; margin-bottom:22px; }
+    .toolbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:16px 20px; padding:15px 18px; border:1px solid var(--line); border-radius:10px; background:#141c20; margin-bottom:22px; }
     .run-controls,.panel-controls { display:flex; align-items:center; flex-wrap:wrap; gap:10px; }
     .source { color:var(--muted); font-size:12px; margin-left:4px; }
     .panel-controls { gap:18px; }
     .panel-controls label { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; }
+    .model-controls { flex-basis:100%; display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; border-top:1px solid var(--line); padding-top:12px; font-size:12px; }
+    .model-controls select { max-width:100%; }
+    .model-controls .subtle { font-size:11px; }
+    .active-model { overflow-wrap:anywhere; }
     input[type=checkbox] { accent-color:var(--mint); width:15px; height:15px; margin:0; }
     kbd { font:10px ui-monospace,SFMono-Regular,monospace; padding:1px 5px; border:1px solid #46535a; border-radius:3px; color:var(--muted); }
     .workspace { display:grid; grid-template-columns:minmax(310px, .9fr) minmax(420px, 1.3fr); gap:20px; align-items:start; }
@@ -119,6 +123,7 @@ export const page = String.raw`<!doctype html>
   <div class="toolbar">
     <div class="run-controls"><button class="primary" id="run" type="button">Run offline demo</button><button id="stop" type="button" disabled>Stop</button><span class="source" id="source">Fixture · scripted Jev labels · no API keys</span></div>
     <div class="panel-controls" aria-label="Visible panels"><span class="subtle" style="font-size:11px">Inspect</span><label><input id="toggle-raw" type="checkbox" checked>Raw transcript <kbd>R</kbd></label><label><input id="toggle-jev" type="checkbox" checked>Jev decisions <kbd>J</kbd></label></div>
+    <div class="model-controls"><label for="stt-model">STT model</label><select id="stt-model" aria-describedby="stt-model-help"><option value="openai/gpt-realtime-whisper">OpenAI gpt-realtime-whisper</option><option value="xai/grok-stt">xAI grok-stt</option></select><span class="subtle" id="stt-model-help">Select the Gateway model for live input.</span></div>
   </div>
   <div id="notice" class="notice" role="alert" hidden></div>
   <main class="workspace" id="workspace">
@@ -131,7 +136,7 @@ export const page = String.raw`<!doctype html>
     </section>
     <div class="inspectors" id="inspectors">
       <section class="panel" id="raw-panel" aria-labelledby="raw-title">
-        <div class="panel-head"><div><div class="letter">B / BEFORE THE FILTER</div><h2 id="raw-title">Raw transcript</h2><p>Unfiltered speech, including ambient conversation.</p></div><span class="tag neutral">UNFILTERED</span></div>
+        <div class="panel-head"><div><div class="letter">B / BEFORE THE FILTER</div><h2 id="raw-title">Raw transcript</h2><p>Unfiltered speech, including ambient conversation.</p><p class="active-model mono" id="active-stt-model">Fixture replay · no live STT</p></div><span class="tag neutral">UNFILTERED</span></div>
         <div class="raw-body"><div class="raw-info"><span id="raw-kind">Waiting for words</span><span class="mono" id="raw-time">—</span></div><p class="raw-current subtle" id="raw-current">The live word stream will appear here.</p></div>
         <div class="raw-log" id="raw-log" aria-label="Recent unfiltered transcript events"><p class="subtle" style="font-size:11px">Partial and final transcript updates stay visible here.</p></div>
       </section>
@@ -156,7 +161,7 @@ export const page = String.raw`<!doctype html>
 <script>
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const state = { running:false, phase:'idle', mode:'fixture', classifier:'dry-run', started:false, connected:false, pending:false, invalidated:false, submits:0, evaluations:0, held:0, debounceMs:1500, latestPreview:null, history:[], selected:'latest', rawCount:0 };
+  const state = { running:false, phase:'idle', mode:'fixture', classifier:'dry-run', sttProvider:'gateway', sttModel:'openai/gpt-realtime-whisper', sttModelChanging:false, modelPending:false, requestedSttModel:null, started:false, connected:false, pending:false, invalidated:false, submits:0, evaluations:0, held:0, debounceMs:1500, latestPreview:null, history:[], selected:'latest', rawCount:0 };
   const MAX_HISTORY = 150;
   const MAX_MESSAGES = 1000;
   const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -171,10 +176,19 @@ export const page = String.raw`<!doctype html>
     if (record.state) state.phase = record.state;
     if (record.mode) state.mode = record.mode;
     if (record.classifier) state.classifier = record.classifier;
+    if (record.sttProvider) state.sttProvider = record.sttProvider;
+    if (record.sttModel) state.sttModel = record.sttModel;
+    if (typeof record.sttModelChanging === 'boolean') state.sttModelChanging = record.sttModelChanging;
     if (state.running) state.started = true;
     const offline = isOffline();
     const disabled = state.classifier === 'disabled';
-    $('run').disabled = state.running || state.pending || !state.connected;
+    const modelChanging = state.sttModelChanging || state.modelPending;
+    const deepgram = state.mode !== 'fixture' && state.sttProvider === 'deepgram';
+    $('stt-model').value = state.requestedSttModel || state.sttModel;
+    $('stt-model').disabled = modelChanging || state.pending || !state.connected || state.phase === 'stopping' || deepgram;
+    $('stt-model-help').textContent = modelChanging ? 'Reconnecting STT…' : state.mode === 'fixture' ? 'Selected for live input. Fixture replay needs no API keys.' : deepgram ? 'Gateway model selection requires the Gateway STT provider.' : 'Switching reconnects STT; the chat and filter stay open.';
+    $('active-stt-model').textContent = state.mode === 'fixture' ? 'Fixture replay · no live STT' : deepgram ? 'Deepgram' : state.sttModel + (modelChanging ? ' · reconnecting…' : '');
+    $('run').disabled = state.running || state.pending || modelChanging || !state.connected;
     $('stop').disabled = !state.running || state.pending || state.phase === 'stopping';
     $('run').textContent = state.started ? (state.mode === 'mic' ? 'Start microphone' : 'Replay ' + (offline ? 'offline demo' : state.mode)) : (offline ? 'Run offline demo' : 'Start ' + state.mode);
     $('source').textContent = state.mode + ' · ' + (disabled ? 'STT only · classifier disabled' : offline ? 'scripted Jev labels · no API keys' : 'Jev via Vercel AI Gateway');
@@ -209,6 +223,17 @@ export const page = String.raw`<!doctype html>
   }
   $('run').addEventListener('click', () => action('/api/run'));
   $('stop').addEventListener('click', () => action('/api/stop'));
+  $('stt-model').addEventListener('change', async () => {
+    const model = $('stt-model').value;
+    state.modelPending = true; state.requestedSttModel = model; updateStatus({}); notice('');
+    try {
+      const response = await fetch('/api/stt-model', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ model }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not switch STT models.');
+      updateStatus(result);
+    } catch (error) { notice(error.message || 'Could not reach the local server.'); }
+    finally { state.modelPending = false; state.requestedSttModel = null; updateStatus({}); }
+  });
   function reset() {
     state.submits = 0; state.evaluations = 0; state.held = 0; state.latestPreview = null; state.history = []; state.selected = 'latest'; state.rawCount = 0; state.invalidated = false;
     for (const el of $('chat-list').querySelectorAll('.message')) el.remove();

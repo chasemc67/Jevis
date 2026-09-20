@@ -1,3 +1,5 @@
+import { DEFAULT_STT_MODEL, isGatewaySttModel, type GatewaySttModel } from './stt/models.js';
+
 export interface FilterConfig {
   everyNWords: number;
   debounceMs: number;
@@ -9,6 +11,8 @@ export interface FilterConfig {
 }
 
 export interface Config extends FilterConfig {
+  sttProvider: 'gateway' | 'deepgram';
+  sttModel: GatewaySttModel;
   deepgramApiKey?: string;
   gatewayApiKey?: string;
   jevTimeoutMs: number;
@@ -34,10 +38,18 @@ function boolean(env: NodeJS.ProcessEnv, key: string, fallback: boolean): boolea
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  if (env.STT_PROVIDER && env.STT_PROVIDER !== 'deepgram') throw new Error('Phase 0 implements STT_PROVIDER=deepgram only');
+  const requestedSttProvider = env.STT_PROVIDER?.trim() || 'gateway';
+  const sttModel = env.STT_MODEL?.trim() || DEFAULT_STT_MODEL;
+  const deepgramApiKey = env.DEEPGRAM_API_KEY?.trim() || undefined;
+  if (requestedSttProvider !== 'gateway' && requestedSttProvider !== 'deepgram') throw new Error('STT_PROVIDER must be gateway or deepgram');
+  if (!isGatewaySttModel(sttModel)) throw new Error('STT_MODEL must be openai/gpt-realtime-whisper or xai/grok-stt');
   if (env.JEV_MODEL && env.JEV_MODEL !== 'typesafe-ai/jev') throw new Error('JEV_MODEL must be typesafe-ai/jev via Vercel AI Gateway');
   return {
-    deepgramApiKey: env.DEEPGRAM_API_KEY?.trim() || undefined,
+    // Older .env files selected Deepgram by default. Migrate them to the one-key
+    // Gateway path unless an optional Deepgram credential is actually supplied.
+    sttProvider: requestedSttProvider === 'deepgram' && deepgramApiKey ? 'deepgram' : 'gateway',
+    sttModel,
+    deepgramApiKey,
     gatewayApiKey: env.AI_GATEWAY_API_KEY?.trim() || undefined,
     everyNWords: number(env, 'JEV_EVERY_N_WORDS', 1, 1, 3),
     debounceMs: number(env, 'DEBOUNCE_MS', 1500, 1000, 2000),

@@ -23,7 +23,7 @@ async function runDemo(name: string): Promise<Record<string, unknown>[]> {
     env: {
       ...process.env,
       DEEPGRAM_API_KEY: '', AI_GATEWAY_API_KEY: '',
-      STT_PROVIDER: 'deepgram', JEV_MODEL: 'typesafe-ai/jev',
+      STT_PROVIDER: 'gateway', STT_MODEL: 'openai/gpt-realtime-whisper', JEV_MODEL: 'typesafe-ai/jev',
       JEV_EVERY_N_WORDS: '1', DEBOUNCE_MS: '1500',
       T_DIR_CONFIDENCE: '0.6', T_NOUL: '0.6', K: '8',
       WINDOW_MAX_WORDS: '40', REGION_SILENCE_MS: '1500',

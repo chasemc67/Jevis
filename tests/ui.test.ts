@@ -47,7 +47,7 @@ test('offline UI streams real filter events, cancels safely, replays, and restor
     '--mode', 'fixture', '--dry-run', '--ui', '--port', '0'], {
     env: {
       ...process.env, DEEPGRAM_API_KEY: '', AI_GATEWAY_API_KEY: '',
-      STT_PROVIDER: 'deepgram', JEV_MODEL: 'typesafe-ai/jev',
+      STT_PROVIDER: 'gateway', STT_MODEL: 'openai/gpt-realtime-whisper', JEV_MODEL: 'typesafe-ai/jev',
       JEV_EVERY_N_WORDS: '1', DEBOUNCE_MS: '1500', T_DIR_CONFIDENCE: '0.6', T_NOUL: '0.6',
       K: '8', WINDOW_MAX_WORDS: '40', REGION_SILENCE_MS: '1500', JEV_TIMEOUT_MS: '4000',
       GATEWAY_ZERO_DATA_RETENTION: 'false', DEBUG_AUDIO: 'false',
@@ -74,15 +74,29 @@ test('offline UI streams real filter events, cancels safely, replays, and restor
   });
   const page = await fetch(url);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Chat stream/);
-  const initial = await fetch(`${url}/api/status`).then(res => res.json()) as { running: boolean };
+  const html = await page.text();
+  assert.match(html, /Chat stream/);
+  assert.match(html, /<label for="stt-model">STT model<\/label>/);
+  assert.match(html, /value="openai\/gpt-realtime-whisper">OpenAI gpt-realtime-whisper/);
+  assert.match(html, /value="xai\/grok-stt">xAI grok-stt/);
+  assert.match(html, /id="active-stt-model"/);
+  const initial = await fetch(`${url}/api/status`).then(res => res.json()) as { running: boolean; sttModel: string };
   assert.equal(initial.running, false, 'opening the page must not start capture or miss fixture words');
+  assert.equal(initial.sttModel, 'openai/gpt-realtime-whisper');
   assert.equal((await fetch(`${url}/api/run`, { method: 'POST', headers: { Origin: 'https://example.com' } })).status, 403);
   const stream = await subscribe(url);
   subscriptions.push(stream);
   assert.equal((await fetch(`${url}/api/run`, { method: 'POST' })).status, 202);
   assert.equal((await fetch(`${url}/api/run`, { method: 'POST' })).status, 409, 'one input run at a time');
   await stream.wait(events => events.some(e => e.event === 'stt_partial'));
+  const resetsBeforeSelection = stream.records.filter(record => record.event === 'ui_reset').length;
+  const selection = await fetch(`${url}/api/stt-model`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'xai/grok-stt' }),
+  });
+  assert.equal(selection.status, 200, 'offline demos allow model selection without keys or reconnecting the fixture');
+  assert.equal((await selection.json()).sttModel, 'xai/grok-stt');
+  await stream.wait(events => events.some(e => e.event === 'ui_status' && e.sttModel === 'xai/grok-stt'));
+  assert.equal(stream.records.filter(record => record.event === 'ui_reset').length, resetsBeforeSelection);
   await fetch(`${url}/api/stop`, { method: 'POST' });
   await stream.wait(events => events.some(e => e.event === 'ui_status' && e.state === 'stopped'));
   assert.equal(stream.records.filter(e => e.event === 'queue_submit').length, 0);
@@ -114,4 +128,5 @@ test('offline UI streams real filter events, cancels safely, replays, and restor
   await restored.wait(events => events.some(e => e.event === 'ui_status' && e.state === 'completed'));
   assert.equal(restored.records[0]?.event, 'ui_reset');
   assert.deepEqual(restored.records.filter(e => e.event === 'queue_submit').map(e => e.text), ['Could you summarize my notes?']);
+  assert.equal(restored.records.at(-1)?.sttModel, 'xai/grok-stt');
 });

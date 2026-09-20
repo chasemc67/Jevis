@@ -4,6 +4,10 @@ import { startUiServer } from '../apps/speech-filter-harness/src/ui/server.js';
 
 interface UiRecord { event: string; [key: string]: unknown }
 
+const selectModel = (url: string, model: string) => fetch(`${url}/api/stt-model`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }),
+});
+
 async function snapshot(url: string, state: string): Promise<{ records: UiRecord[]; bytes: number }> {
   const response = await fetch(`${url}/events`, { signal: AbortSignal.timeout(5000) });
   assert.equal(response.status, 200);
@@ -93,4 +97,116 @@ test('failed UI runs expose safe errors and release the run slot for replay and 
   assert.equal(runningSignal?.aborted, true);
   assert.equal(stopped.records.at(-1)?.running, false);
   assert.equal(stopped.records.filter(record => record.event === 'ui_error').length, 0, 'replay clears the previous run error');
+});
+
+test('Gateway model changes serialize reconnects, preserve the session, and replay the active model', async t => {
+  let runs = 0;
+  let reconnects = 0;
+  let maxReconnects = 0;
+  let releaseFirst!: () => void;
+  let enteredFirst!: () => void;
+  const firstEntered = new Promise<void>(resolve => { enteredFirst = resolve; });
+  const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const changes: string[] = [];
+  const ui = await startUiServer({
+    port: 0, mode: 'mic', classifier: 'typesafe-ai/jev', sttProvider: 'gateway', log: () => {},
+    run: async (signal, log, controls) => {
+      runs++;
+      assert.equal(controls.sttModel, 'openai/gpt-realtime-whisper');
+      const unsubscribe = controls.onSttModelChange(async model => {
+        changes.push(model);
+        maxReconnects = Math.max(maxReconnects, ++reconnects);
+        if (changes.length === 1) { enteredFirst(); await firstReleased; }
+        log('stt_connected', { model });
+        reconnects--;
+      });
+      log('queue_submit', { id: 'preserved', text: 'Keep this chat message.' });
+      try { await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })); }
+      finally { unsubscribe(); }
+    },
+  });
+  t.after(async () => { releaseFirst(); await ui.close(); });
+  assert.equal((await fetch(`${ui.url}/api/run`, { method: 'POST' })).status, 202);
+  const first = selectModel(ui.url, 'xai/grok-stt');
+  await firstEntered;
+  const during = await fetch(`${ui.url}/api/status`).then(response => response.json());
+  assert.equal(during.sttModel, 'openai/gpt-realtime-whisper', 'do not label a model active before it connects');
+  assert.equal(during.sttModelChanging, true);
+  const second = selectModel(ui.url, 'openai/gpt-realtime-whisper');
+  releaseFirst();
+  assert.equal((await first).status, 200);
+  assert.equal((await second).status, 200);
+  assert.deepEqual(changes, ['xai/grok-stt', 'openai/gpt-realtime-whisper']);
+  assert.equal(maxReconnects, 1);
+  assert.equal(runs, 1, 'a model switch must not restart input, filtering, or chat');
+  const latest = await fetch(`${ui.url}/api/status`).then(response => response.json());
+  assert.equal(latest.sttModel, 'openai/gpt-realtime-whisper');
+  assert.equal(latest.sttModelChanging, false);
+  assert.equal(latest.running, true);
+  await fetch(`${ui.url}/api/stop`, { method: 'POST' });
+  const replay = await snapshot(ui.url, 'stopped');
+  assert.deepEqual(replay.records.filter(record => record.event === 'queue_submit').map(record => record.id), ['preserved']);
+});
+
+test('model selection validates input and hides provider diagnostics when reconnect fails', async t => {
+  const diagnostic = 'private-provider-reconnect-diagnostic';
+  const terminal: UiRecord[] = [];
+  let signal: AbortSignal | undefined;
+  let changes = 0;
+  const ui = await startUiServer({
+    port: 0, mode: 'mic', classifier: 'typesafe-ai/jev',
+    log: (event, fields) => { terminal.push({ event, ...fields }); },
+    run: async (runSignal, _log, controls) => {
+      signal = runSignal;
+      controls.onSttModelChange(async () => { changes++; throw new Error(diagnostic); });
+      await new Promise<void>(resolve => runSignal.addEventListener('abort', () => resolve(), { once: true }));
+    },
+  });
+  t.after(() => ui.close());
+  assert.equal((await selectModel(ui.url, 'not/a-supported-model')).status, 400);
+  assert.equal((await fetch(`${ui.url}/api/stt-model`, { method: 'POST', body: '{}' })).status, 415);
+  assert.equal((await fetch(`${ui.url}/api/stt-model`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{bad json',
+  })).status, 400);
+  assert.equal((await fetch(`${ui.url}/api/stt-model`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+    body: JSON.stringify({ model: 'xai/grok-stt' }),
+  })).status, 403);
+  assert.equal((await fetch(`${ui.url}/api/run`, { method: 'POST' })).status, 202);
+  const failed = await selectModel(ui.url, 'xai/grok-stt');
+  assert.equal(failed.status, 503);
+  assert.ok(!(await failed.text()).includes(diagnostic));
+  const replay = await snapshot(ui.url, 'running');
+  assert.ok(!JSON.stringify(replay.records).includes(diagnostic));
+  assert.equal(changes, 1);
+  assert.ok(JSON.stringify(terminal).includes(diagnostic));
+  const current = await fetch(`${ui.url}/api/status`).then(response => response.json());
+  assert.equal(current.sttModel, 'openai/gpt-realtime-whisper');
+  assert.equal(current.sttModelChanging, false);
+  assert.equal((await fetch(`${ui.url}/api/stop`, { method: 'POST' })).status, 202);
+  assert.equal(signal?.aborted, true);
+});
+
+test('stopping a pending model reconnect cancels it without committing the selection', async t => {
+  let entered!: () => void;
+  const reconnecting = new Promise<void>(resolve => { entered = resolve; });
+  const ui = await startUiServer({
+    port: 0, mode: 'mic', classifier: 'typesafe-ai/jev', log: () => {},
+    run: async (signal, _log, controls) => {
+      const stopped = new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+      controls.onSttModelChange(async () => { entered(); await stopped; });
+      await stopped;
+    },
+  });
+  t.after(() => ui.close());
+  await fetch(`${ui.url}/api/run`, { method: 'POST' });
+  const changing = selectModel(ui.url, 'xai/grok-stt');
+  await reconnecting;
+  assert.equal((await fetch(`${ui.url}/api/stop`, { method: 'POST' })).status, 202);
+  assert.equal((await changing).status, 409);
+  const current = await fetch(`${ui.url}/api/status`).then(response => response.json());
+  assert.equal(current.state, 'stopped');
+  assert.equal(current.running, false);
+  assert.equal(current.sttModel, 'openai/gpt-realtime-whisper');
+  assert.equal(current.sttModelChanging, false);
 });
