@@ -136,6 +136,7 @@ export class GatewayStt {
   private audioBytes = 0;
   private pendingAudio?: { controller: ReadableStreamDefaultController<Uint8Array | string>; resolve(): void };
   private isConnected = false;
+  private filterConnected = false;
   private finishing = false;
   private stopped = false;
   private failure?: Error;
@@ -209,6 +210,7 @@ export class GatewayStt {
     if (this.connectTimer) clearTimeout(this.connectTimer);
     this.connectTimer = undefined;
     this.isConnected = true;
+    this.filterConnected = true;
     this.options.callbacks.onConnection(true);
     this.options.callbacks.log('stt_connected', { provider: 'gateway', model: this.model, timing: 'approximate_word_timestamps' });
     this.resolveConnection?.();
@@ -233,7 +235,7 @@ export class GatewayStt {
         if (part.type === 'error') throw this.safeError(part.error);
         let event: WordEvent | undefined;
         try { event = this.normalizer.apply(part, this.audioBytes / PCM_BYTES_PER_MS); }
-        catch { this.malformedEvents++; throw new GatewaySttError('Gateway STT returned malformed or overlapping transcript events; restart the stream.'); }
+        catch { this.malformedEvents++; throw new GatewaySttError('Gateway STT returned malformed or overlapping transcript events; restart the stream.', false); }
         if (!event) continue;
         if (event.words.length) { this.nonemptyTranscriptEvents++; this.reconnectAttempt = 0; }
         this.unfinishedTranscript = !event.isFinal && event.words.length > 0;
@@ -286,6 +288,7 @@ export class GatewayStt {
   }
 
   private clearAudio(): void {
+    this.droppedFrames += this.audioQueue.length;
     this.audioQueue.length = 0;
     this.queuedBytes = 0;
     if (this.pendingAudio) {
@@ -348,9 +351,12 @@ export class GatewayStt {
   }
 
   private disconnect(reason: string, notify = true): void {
-    if (!this.isConnected) return;
+    if (!this.isConnected && !this.filterConnected) return;
     this.isConnected = false;
-    if (notify) this.options.callbacks.onConnection(false);
+    if (notify && this.filterConnected) {
+      this.filterConnected = false;
+      this.options.callbacks.onConnection(false);
+    }
     this.options.callbacks.log('stt_disconnected', { provider: 'gateway', model: this.model, reason });
   }
 

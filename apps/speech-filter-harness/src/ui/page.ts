@@ -1,3 +1,5 @@
+import { browserCaptureScript } from './browser.js';
+
 /** Self-contained localhost UI. Transcript content is always rendered as text. */
 export const page = String.raw`<!doctype html>
 <html lang="en">
@@ -125,6 +127,8 @@ export const page = String.raw`<!doctype html>
     <div class="panel-controls" aria-label="Visible panels"><span class="subtle" style="font-size:11px">Inspect</span><label><input id="toggle-raw" type="checkbox" checked>Raw transcript <kbd>R</kbd></label><label><input id="toggle-jev" type="checkbox" checked>Jev decisions <kbd>J</kbd></label></div>
     <div class="model-controls"><label for="stt-model">STT model</label><select id="stt-model" aria-describedby="stt-model-help"><option value="openai/gpt-realtime-whisper">OpenAI gpt-realtime-whisper</option><option value="xai/grok-stt">xAI grok-stt</option></select><span class="subtle" id="stt-model-help">Select the Gateway model for live input.</span></div>
   </div>
+  <div id="mic-controls" class="toolbar" hidden><label for="mic-device">Microphone</label><select id="mic-device"><option value="default">System default</option></select><label>Input level <meter id="mic-level" min="0" max="1" value="0"></meter></label><span class="subtle">Chrome asks for permission on Start. Stop to change inputs.</span></div>
+  <div id="mic-permission" class="notice" hidden>Allow microphone access using the site controls beside the address bar, or open <a href="chrome://settings/content/microphone">Chrome microphone settings</a> (chrome://settings/content/microphone), then start again.</div>
   <div id="notice" class="notice" role="alert" hidden></div>
   <main class="workspace" id="workspace">
     <section class="panel chat" aria-labelledby="chat-title">
@@ -160,8 +164,10 @@ export const page = String.raw`<!doctype html>
 </div>
 <script>
   'use strict';
+  ${browserCaptureScript}
   const $ = (id) => document.getElementById(id);
   const state = { running:false, phase:'idle', mode:'fixture', classifier:'dry-run', sttProvider:'gateway', sttModel:'openai/gpt-realtime-whisper', sttModelChanging:false, modelPending:false, requestedSttModel:null, started:false, connected:false, pending:false, invalidated:false, submits:0, evaluations:0, held:0, debounceMs:1500, latestPreview:null, history:[], selected:'latest', rawCount:0 };
+  let mic = null;
   const MAX_HISTORY = 150;
   const MAX_MESSAGES = 1000;
   const number = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -172,6 +178,7 @@ export const page = String.raw`<!doctype html>
   function notice(text) { $('notice').textContent = text; $('notice').hidden = !text; }
   function isOffline() { return /dry|script|offline/i.test(state.classifier); }
   function updateStatus(record) {
+    if (record.running === false && ['stopped','completed','error'].includes(record.state) && mic) { mic.stop(); mic = null; state.pending = false; }
     if (typeof record.running === 'boolean') state.running = record.running;
     if (record.state) state.phase = record.state;
     if (record.mode) state.mode = record.mode;
@@ -189,7 +196,9 @@ export const page = String.raw`<!doctype html>
     $('stt-model-help').textContent = modelChanging ? 'Reconnecting STT…' : state.mode === 'fixture' ? 'Selected for live input. Fixture replay needs no API keys.' : deepgram ? 'Gateway model selection requires the Gateway STT provider.' : 'Switching reconnects STT; the chat and filter stay open.';
     $('active-stt-model').textContent = state.mode === 'fixture' ? 'Fixture replay · no live STT' : deepgram ? 'Deepgram' : state.sttModel + (modelChanging ? ' · reconnecting…' : '');
     $('run').disabled = state.running || state.pending || modelChanging || !state.connected;
-    $('stop').disabled = !state.running || state.pending || state.phase === 'stopping';
+    $('stop').disabled = (!state.running && !mic) || state.phase === 'stopping';
+    $('mic-controls').hidden = state.mode !== 'mic';
+    $('mic-device').disabled = state.running || !!mic || state.pending;
     $('run').textContent = state.started ? (state.mode === 'mic' ? 'Start microphone' : 'Replay ' + (offline ? 'offline demo' : state.mode)) : (offline ? 'Run offline demo' : 'Start ' + state.mode);
     $('source').textContent = state.mode + ' · ' + (disabled ? 'STT only · classifier disabled' : offline ? 'scripted Jev labels · no API keys' : 'Jev via Vercel AI Gateway');
     $('classifier-label').textContent = disabled ? 'Classifier disabled in STT-only mode.' : offline ? 'Scripted fixture labels stand in for Jev.' : 'Live Jev labels via Vercel AI Gateway.';
@@ -221,8 +230,50 @@ export const page = String.raw`<!doctype html>
     catch (error) { notice(error.message || 'Could not reach the local server.'); }
     finally { state.pending = false; updateStatus({}); }
   }
-  $('run').addEventListener('click', () => action('/api/run'));
-  $('stop').addEventListener('click', () => action('/api/stop'));
+  let savedDevice = 'default';
+  try { savedDevice = localStorage.getItem('jevis-mic-device') || 'default'; } catch {}
+  async function refreshDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'audioinput');
+      const selected = $('mic-device').value || savedDevice;
+      $('mic-device').replaceChildren();
+      const fallback = node('option', '', 'System default'); fallback.value = 'default'; $('mic-device').append(fallback);
+      for (const device of devices) {
+        if (!device.deviceId || device.deviceId === 'default') continue;
+        const option = node('option', '', device.label || 'Microphone ' + ($('mic-device').options.length));
+        option.value = device.deviceId; $('mic-device').append(option);
+      }
+      $('mic-device').value = devices.some(device => device.deviceId === savedDevice) ? savedDevice : selected;
+      if (!$('mic-device').value) $('mic-device').value = 'default';
+    } catch { /* Permission may hide input labels until Start. */ }
+  }
+  $('mic-device').addEventListener('change', () => {
+    savedDevice = $('mic-device').value;
+    try { localStorage.setItem('jevis-mic-device', savedDevice); } catch {}
+  });
+  navigator.mediaDevices?.addEventListener('devicechange', refreshDevices);
+  void refreshDevices();
+  $('run').addEventListener('click', async () => {
+    if (state.mode !== 'mic') { await action('/api/run'); return; }
+    if (mic || state.pending || state.running) return;
+    notice(''); $('mic-permission').hidden = true;
+    const capture = mic = new BrowserMic(message => { notice(message); if (mic === capture) { mic = null; state.pending = false; } updateStatus({}); }, level => { $('mic-level').value = Math.min(1, level * 4); });
+    state.pending = true; updateStatus({});
+    try {
+      await capture.start($('mic-device').value, state.sttProvider === 'deepgram' ? 16000 : 24000);
+      await refreshDevices();
+    } catch (error) {
+      const cancelled = capture.closed;
+      capture.stop();
+      if (!cancelled && error.name !== 'AbortError') {
+        notice(error.name === 'NotAllowedError' ? 'Microphone permission was denied.' : error.name === 'NotFoundError' || error.name === 'OverconstrainedError' ? 'Selected microphone is unavailable. Choose another input.' : error.message || 'Could not start microphone.');
+        $('mic-permission').hidden = error.name !== 'NotAllowedError';
+      }
+    } finally { if (mic === capture) { if (capture.closed) mic = null; state.pending = false; updateStatus({}); } }
+  });
+  $('stop').addEventListener('click', () => { mic?.stop(); mic = null; state.pending = false; void action('/api/stop'); });
+  window.addEventListener('pagehide', () => { mic?.stop(); });
   $('stt-model').addEventListener('change', async () => {
     const model = $('stt-model').value;
     state.modelPending = true; state.requestedSttModel = model; updateStatus({}); notice('');

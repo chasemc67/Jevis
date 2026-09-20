@@ -1,3 +1,6 @@
+import { WebSocketServer } from 'ws';
+import { BrowserAudioSource } from '../mic/browser.js';
+import { pcmWorklet } from './browser.js';
 import { createServer, type ServerResponse } from 'node:http';
 import { DEFAULT_STT_MODEL, isGatewaySttModel, type GatewaySttModel } from '../stt/models.js';
 import type { Log } from '../stt/types.js';
@@ -5,6 +8,7 @@ import { page } from './page.js';
 
 export interface UiSessionControls {
   readonly sttModel: GatewaySttModel;
+  readonly browserAudio?: BrowserAudioSource;
   /** Register before awaiting startup, and use the run signal to cancel a pending reconnect. */
   onSttModelChange(listener: (model: GatewaySttModel) => Promise<void>): () => void;
 }
@@ -79,7 +83,7 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
     for (const client of clients) send(client, item.record);
   };
   const sendStatus = (): void => publish('ui_status', status());
-  const start = (): boolean => {
+  const start = (browserAudio?: BrowserAudioSource): boolean => {
     if (active || closed || pendingModelChanges) return false;
     history.length = 0;
     submits.length = 0;
@@ -90,7 +94,12 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
     state = 'running';
     const abort = new AbortController();
     const session: ActiveSession = { abort, done: Promise.resolve() };
+    if (browserAudio) {
+      void browserAudio.disconnected.then(() => abort.abort());
+      abort.signal.addEventListener('abort', () => { void browserAudio.stop(); }, { once: true });
+    }
     const controls: UiSessionControls = {
+      browserAudio,
       get sttModel() { return sttModel; },
       onSttModelChange(listener) {
         session.switchModel = listener;
@@ -106,7 +115,7 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
         options.log('harness_error', { message: error instanceof Error ? error.message : 'Harness failed' });
         publish('ui_error', { message: 'Stream failed. Check the local terminal diagnostics, configuration, and input device.' });
       }
-    }).finally(() => { active = undefined; sendStatus(); });
+    }).finally(async () => { await browserAudio?.stop(); active = undefined; sendStatus(); });
     session.done = done;
     active = session;
     sendStatus();
@@ -115,7 +124,7 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
   const server = createServer((request, response) => {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'");
+    response.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-inline'; worker-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'");
     const json = (code: number, body: unknown): void => {
       response.writeHead(code, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(body));
@@ -128,6 +137,10 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
     if (request.method === 'GET' && request.url === '/') {
       response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       response.end(page); return;
+    }
+    if (request.method === 'GET' && request.url === '/mic-worklet.js') {
+      response.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      response.end(pcmWorklet); return;
     }
     if (request.method === 'GET' && request.url === '/api/status') { json(200, status()); return; }
     if (request.method === 'GET' && request.url === '/events') {
@@ -144,6 +157,7 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
       return;
     }
     if (request.method === 'POST' && request.url === '/api/run') {
+      if (options.mode === 'mic') { json(409, { error: 'Start the microphone from the browser audio connection.' }); return; }
       json(start() ? 202 : 409, status()); return;
     }
     if (request.method === 'POST' && request.url === '/api/stop') {
@@ -202,6 +216,19 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
     }
     json(404, { error: 'Not found' });
   });
+  const audioServer = new WebSocketServer({ noServer: true, maxPayload: 960, perMessageDeflate: false });
+  server.on('upgrade', (request, socket, head) => {
+    // Browser WebSockets always send Origin. Require it, and check Host too.
+    const forbidden = request.headers.host !== new URL(url).host || request.headers.origin !== url;
+    if (forbidden || request.url !== '/audio' || options.mode !== 'mic' || closed || active || pendingModelChanges) {
+      socket.end('HTTP/1.1 ' + (forbidden ? '403 Forbidden' : '409 Conflict') + '\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    audioServer.handleUpgrade(request, socket, head, ws => {
+      const source = new BrowserAudioSource(ws, options.sttProvider === 'deepgram' ? 16_000 : 24_000, publish);
+      if (!start(source)) void source.stop();
+    });
+  });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(options.port, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
@@ -221,6 +248,8 @@ export async function startUiServer(options: UiOptions): Promise<{ url: string; 
       active?.abort.abort();
       await active?.done;
       await modelChanges;
+      for (const socket of audioServer.clients) socket.terminate();
+      await new Promise<void>(resolve => audioServer.close(() => resolve()));
       for (const client of clients) client.response.destroy();
       clients.clear();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

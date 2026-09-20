@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
+
+async function startMic(url: string): Promise<WebSocket> {
+  const socket = new WebSocket(url.replace('http:', 'ws:') + '/audio', { origin: url });
+  await once(socket, 'open');
+  return socket;
+}
 import { startUiServer } from '../apps/speech-filter-harness/src/ui/server.js';
 
 interface UiRecord { event: string; [key: string]: unknown }
@@ -126,7 +134,7 @@ test('Gateway model changes serialize reconnects, preserve the session, and repl
     },
   });
   t.after(async () => { releaseFirst(); await ui.close(); });
-  assert.equal((await fetch(`${ui.url}/api/run`, { method: 'POST' })).status, 202);
+  await startMic(ui.url);
   const first = selectModel(ui.url, 'xai/grok-stt');
   await firstEntered;
   const during = await fetch(`${ui.url}/api/status`).then(response => response.json());
@@ -172,7 +180,7 @@ test('model selection validates input and hides provider diagnostics when reconn
     method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
     body: JSON.stringify({ model: 'xai/grok-stt' }),
   })).status, 403);
-  assert.equal((await fetch(`${ui.url}/api/run`, { method: 'POST' })).status, 202);
+  await startMic(ui.url);
   const failed = await selectModel(ui.url, 'xai/grok-stt');
   assert.equal(failed.status, 503);
   assert.ok(!(await failed.text()).includes(diagnostic));
@@ -199,7 +207,7 @@ test('stopping a pending model reconnect cancels it without committing the selec
     },
   });
   t.after(() => ui.close());
-  await fetch(`${ui.url}/api/run`, { method: 'POST' });
+  await startMic(ui.url);
   const changing = selectModel(ui.url, 'xai/grok-stt');
   await reconnecting;
   assert.equal((await fetch(`${ui.url}/api/stop`, { method: 'POST' })).status, 202);
@@ -209,4 +217,88 @@ test('stopping a pending model reconnect cancels it without committing the selec
   assert.equal(current.running, false);
   assert.equal(current.sttModel, 'openai/gpt-realtime-whisper');
   assert.equal(current.sttModelChanging, false);
+});
+
+
+test('browser PCM owns mic sessions, validates frames, and aborts on disconnect or Stop', async t => {
+  const frames: Buffer[] = [];
+  const signals: AbortSignal[] = [];
+  const ui = await startUiServer({
+    port: 0, mode: 'mic', classifier: 'disabled', log: () => {},
+    run: async (signal, _log, controls) => {
+      signals.push(signal);
+      assert.ok(controls.browserAudio, 'UI mic cannot fall back to SoX');
+      await controls.browserAudio.start(frame => frames.push(frame));
+      await controls.browserAudio.done;
+    },
+  });
+  t.after(() => ui.close());
+  assert.equal((await fetch(`${ui.url}/api/run`, { method: 'POST' })).status, 409);
+  for (const origin of [undefined, 'https://example.com']) {
+    const denied = new WebSocket(ui.url.replace('http:', 'ws:') + '/audio', { origin });
+    await assert.rejects(once(denied, 'open'), /403/);
+  }
+  const open = async () => {
+    const ws = new WebSocket(ui.url.replace('http:', 'ws:') + '/audio', { origin: ui.url });
+    const [message] = await once(ws, 'message');
+    assert.deepEqual(JSON.parse(String(message)), { type: 'ready', sampleRate: 24000, channels: 1, format: 'pcm16le', frameMs: 20 });
+    return ws;
+  };
+  const socket = await open();
+  const duplicate = new WebSocket(ui.url.replace('http:', 'ws:') + '/audio', { origin: ui.url });
+  await assert.rejects(once(duplicate, 'open'), /409/);
+  socket.send(Buffer.alloc(960, 42));
+  // Ordered WS messages ensure the valid frame is handled before malformed input.
+  socket.send('not PCM');
+  const [code] = await once(socket, 'close');
+  assert.equal(code, 1008);
+  await snapshot(ui.url, 'stopped');
+  assert.equal(signals[0]?.aborted, true);
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0]?.[0], 42);
+
+  const second = await open();
+  const closed = once(second, 'close');
+  await fetch(`${ui.url}/api/stop`, { method: 'POST' });
+  await closed;
+  await snapshot(ui.url, 'stopped');
+  assert.equal(signals[1]?.aborted, true);
+  const third = await open();
+  third.terminate();
+  await snapshot(ui.url, 'stopped');
+  assert.equal(signals[2]?.aborted, true);
+});
+
+test('losing the browser during STT startup cancels the pending connection', async t => {
+  let signal: AbortSignal | undefined;
+  const ui = await startUiServer({
+    port: 0, mode: 'mic', classifier: 'disabled', log: () => {},
+    run: async runSignal => {
+      signal = runSignal;
+      await new Promise<void>(resolve => runSignal.addEventListener('abort', () => resolve(), { once: true }));
+    },
+  });
+  t.after(() => ui.close());
+  const socket = await startMic(ui.url);
+  socket.terminate();
+  await snapshot(ui.url, 'stopped');
+  assert.equal(signal?.aborted, true);
+});
+
+
+test('fatal STT cleanup closes browser audio without hiding the run error as a user Stop', async t => {
+  const ui = await startUiServer({
+    port: 0, mode: 'mic', classifier: 'disabled', log() {},
+    run: async (_signal, _log, controls) => {
+      try {
+        await controls.browserAudio!.start(() => {});
+        throw new Error('simulated fatal STT failure');
+      } finally { await controls.browserAudio!.stop(); }
+    },
+  });
+  t.after(() => ui.close());
+  const ws = new WebSocket(ui.url.replace('http:', 'ws:') + '/audio', { origin: ui.url });
+  await once(ws, 'close');
+  const failed = await snapshot(ui.url, 'error');
+  assert.equal(failed.records.filter(record => record.event === 'ui_error').length, 1);
 });

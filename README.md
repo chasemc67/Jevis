@@ -65,10 +65,9 @@ The demo replays partial/final word events and substitutes explicit fixture labe
 
 ### Live: one Gateway key
 
-Microphone and WAV modes use **SoX**. On macOS, from the repo root:
+The live UI captures your microphone in **Chrome/Chromium** with `getUserMedia`; it does not require or launch SoX. From the repo root:
 
 ```sh
-brew install sox
 cp -n .env.example .env
 ```
 
@@ -84,20 +83,26 @@ Then start the live UI:
 npm run mic -- --ui
 ```
 
-Open the printed URL, click **Start mic**, and allow microphone access for the launching app (Terminal, iTerm, or Codex). The key must have access to the selected STT model and `typesafe-ai/jev`; no separate OpenAI, xAI, or TypeSafe key is needed. This is the live equivalent of the demo command: `demo:ui` includes fixture-only `--dry-run`, so use `mic -- --ui` for live input.
+Open the printed URL in Chrome, choose an input in the **Microphone** picker, click **Start mic**, and allow Chrome microphone access. Device labels appear after permission; the picker remembers your choice locally. Stop before choosing a different input. The key must have access to the selected STT model and `typesafe-ai/jev`; no separate OpenAI, xAI, or TypeSafe key is needed. This is the live equivalent of the demo command: `demo:ui` includes fixture-only `--dry-run`, so use `mic -- --ui` for live input.
 
 Use the **STT model** selector to switch **OpenAI `gpt-realtime-whisper` ↔ xAI `grok-stt`**. OpenAI is the default. Switching reconnects STT while capture and chat history stay open; pending filter decisions are invalidated. Audio during reconnection is dropped, so expect a short transcript gap. In fixture mode, the selector only stores a preference for live input.
 
-Click **Stop** to end capture. **Ctrl+C** closes the server. Mic capture is continuous while a live run is active; there is no mute hotkey.
+Keep speaking after each chat submit: one Start supports message 2, 3, and later turns. If a Gateway provider stream ends or has a transient failure, STT reconnects automatically with a short exponential backoff (`stt_reconnect` in the logs). Audio during reconnect is dropped rather than replayed. A normal stream ending preserves completed speech awaiting Jev/debounce; errors invalidate pending decisions. Authentication, access, invalid-request, and malformed-transcript failures stop the session.
+
+Click **Stop** to release the microphone, or close its browser tab. **Ctrl+C** closes the server and capture. A stalled audio connection is stopped after 10 seconds without frames. There is no mute hotkey.
+
+Browser audio uses an AudioWorklet in a 24 kHz Web Audio context (16 kHz for optional Deepgram). Web Audio resamples the physical input. The worklet sends exactly 20 ms of mono signed PCM16 little-endian per binary WebSocket message to the loopback Node server, which forwards it to STT → Jev → chat. The input-level meter is local; microphone audio is never played through the speakers.
+
+**CLI capture and WAV decoding still use SoX.** On macOS, install it with `brew install sox`, then use `npm run mic` or `npm run wav -- --file recordings/example.wav`. Allow microphone access for the launching terminal app when using CLI mic.
 
 <details>
 <summary>Microphone, port, or setup trouble?</summary>
 
 - Check `node --version`: the pinned SDKs require Node 22 or newer.
-- Select a working input in **System Settings → Sound → Input**. A Mac mini may need a USB microphone, headset, or display microphone.
-- Enable the launching app under **Privacy & Security → Microphone** if permission was denied, then restart the command.
-- If SoX is missing from PATH, set `SOX_PATH=/opt/homebrew/bin/sox` in `.env`. `sox -d -n stat` checks capture locally without keys; stop it with Ctrl+C.
-- Use `npm run stt` to inspect live STT before adding Jev. It still needs the Gateway key.
+- Select a working input in the browser **Microphone** picker (or **System Settings → Sound → Input** for CLI). A Mac mini may need a USB microphone, headset, or display microphone.
+- If browser permission was denied, allow the local site using Chrome’s address-bar site controls or `chrome://settings/content/microphone`. Also enable Chrome under macOS **Privacy & Security → Microphone**. For CLI capture, enable the launching terminal app instead.
+- For CLI/WAV only, if SoX is missing from PATH, set `SOX_PATH=/opt/homebrew/bin/sox` in `.env`. `sox -d -n stat` checks capture locally without keys; stop it with Ctrl+C.
+- Use `npm run stt -- --ui` to inspect browser STT before adding Jev (`npm run stt` uses CLI/SoX). It still needs the Gateway key.
 - If port 3210 is busy, use `npm run demo:ui -- --port 3211`.
 - For a stream error, inspect the terminal diagnostics, resolve the key/model/input issue, and start again.
 
@@ -143,7 +148,7 @@ sequenceDiagram
 
 ### From sound to words
 
-**Sources.** [SoX capture](apps/speech-filter-harness/src/mic/sox.ts) supplies microphone audio or decodes/resamples a WAV and streams it at real-time pace. WAV mode doesn't play through speakers or use batch transcription. [JSON fixtures](apps/speech-filter-harness/fixtures/ambient) enter at the word-event boundary, bypassing audio and STT. Fixtures call real Jev unless `--dry-run` supplies scripted decisions (or `--stt-only` disables filtering).
+**Sources.** [Browser capture](apps/speech-filter-harness/src/ui/browser.ts) supplies UI microphone PCM through a [local WebSocket source](apps/speech-filter-harness/src/mic/browser.ts). [SoX capture](apps/speech-filter-harness/src/mic/sox.ts) supplies CLI microphone audio or decodes/resamples a WAV and streams it at real-time pace. WAV mode doesn't play through speakers or use batch transcription. [JSON fixtures](apps/speech-filter-harness/fixtures/ambient) enter at the word-event boundary, bypassing audio and STT. Fixtures call real Jev unless `--dry-run` supplies scripted decisions (or `--stt-only` disables filtering).
 
 **Streaming STT.** The [Gateway adapter](apps/speech-filter-harness/src/stt/gateway.ts) uses AI SDK `experimental_streamTranscribe` with `gateway.transcriptionModel(...)`. Both `openai/gpt-realtime-whisper` and `xai/grok-stt` receive mono PCM16 at **24 kHz**, in 20 ms frames. These are text transcription models, not speech-to-speech voice agents. The existing Deepgram Nova-3 adapter is an optional comparison path for later work, enabled explicitly with `STT_PROVIDER=deepgram` and `DEEPGRAM_API_KEY`; it uses 16 kHz audio. It is not needed for the one-key path.
 
@@ -163,7 +168,7 @@ sequenceDiagram
 
 STT callbacks never wait for Jev. The [controller](apps/speech-filter-harness/src/filter/controller.ts) permits **one evaluator operation at a time**. New words cancel/supersede older work and retain only the latest pending snapshot; the slot stays occupied until cancellation settles. Region and sequence checks ignore stale results, so an older decision cannot authorize newer text. Multiple words in one STT update are coalesced. New speech can conservatively drop unfinished work from a prior region.
 
-The decision panel and logs expose `jev_inflight_dropped`, `jev_stale_ignored`, and evaluation latency. Jev retries a 429/5xx once within a **4-second total deadline**. A terminal Gateway error or audio backlog over one second stops capture; restart after resolving it. The optional Deepgram adapter reconnects with backoff. Neither path submits while disconnected.
+The decision panel and logs expose `jev_inflight_dropped`, `jev_stale_ignored`, and evaluation latency. Jev retries a 429/5xx once within a **4-second total deadline**. Continuous Gateway mic sessions reconnect after normal EOF, transient errors, or an audio backlog over one second, dropping stale queued audio. Fatal Gateway errors stop capture. A normal EOF preserves finalized regions awaiting their submit debounce; interrupted hypotheses and provider errors invalidate pending decisions. The optional Deepgram adapter reconnects with backoff. WAV sessions drain once and finish.
 
 ## Commands and configuration
 
@@ -217,5 +222,5 @@ Phase 0 stops at a visible text feed. **No real agent, tool execution, TTS, spee
 - Agents changing Jev prompts, question shapes, or Gateway wiring must first read the vendored [TypeSafe skill](skills/typesafe-ai/SKILL.md) and [project skill guidance](skills/README.md). The project always routes Jev through Gateway.
 - Start in [`apps/speech-filter-harness/src`](apps/speech-filter-harness/src): `stt/` normalizes speech, `filter/` controls eligibility, `jev/` evaluates candidates, and `ui/` renders telemetry.
 - To add an STT adapter, implement the [SttAdapter contract](apps/speech-filter-harness/src/stt/session.ts), emit normalized word/boundary/connection callbacks, and wire provider selection in `main.ts` and `config.ts`. Add alignment/reconnect tests before using it with the filter.
-- Run `npm run check` before proposing a change. The suite covers fixture replay, transport mocks, alignment, cancellation, debounce, fail-closed behavior, UI controls, and SoX WAV conversion when SoX is installed.
+- Run `npm run check` before proposing a change. The suite covers fixture replay, transport mocks, alignment, cancellation, debounce, fail-closed behavior, UI controls, browser PCM transport/cleanup, continuous multi-submit sessions, and SoX WAV conversion when SoX is installed. When Chrome/Chromium is installed (or `CHROME_PATH` is set), it also runs a headless browser test with a synthetic microphone; that test makes no cloud requests.
 - Visuals are local and reproducible: [asset sources and generation instructions](docs/assets/README.md). The Mermaid sources are [pipeline.mmd](docs/assets/pipeline.mmd) and [ambient-directed.mmd](docs/assets/ambient-directed.mmd).

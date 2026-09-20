@@ -56,7 +56,7 @@ Always-on mic
 ## Component design
 
 ### 1) Always-on mic harness
-- SoX captures the microphone through macOS CoreAudio or decodes and paces a WAV file. Both produce signed 16-bit little-endian mono PCM in 20 ms frames: **24 kHz for Gateway**, **16 kHz for Deepgram**.
+- UI mic sessions use browser `getUserMedia`, a device picker, and an AudioWorklet that sends PCM to the loopback Node server over a same-origin WebSocket. Web Audio resamples the input; SoX is never launched for UI mic. CLI mic uses SoX/CoreAudio; WAV mode uses SoX to decode and pace the file. All paths produce signed 16-bit little-endian mono PCM in 20 ms frames: **24 kHz for Gateway**, **16 kHz for Deepgram**.
 - Word-event JSON fixtures bypass audio/STT. `--dry-run` additionally uses scripted Jev labels and requires no keys; it validates harness behavior, not model accuracy.
 - Stream continuously; no push-to-talk in Phase 0.
 - Log RMS / VAD locally for debug only — **not** the intent gate.
@@ -111,8 +111,8 @@ B. Boolean `is_directed`: clearly talking to agent vs ambient
 - Use latest **applied** gate result (not stale in-flight)
 
 ### 7) Errors / retries
-- Gateway STT: stop on disconnect, malformed events, or excessive audio backpressure; surface the error and restart the run. Model switching deliberately reconnects STT.
-- Optional Deepgram STT: reconnect backoff 250ms → 4s. Both adapters surface `stt_disconnected`; disconnect/model switch discards pending filter state and suppresses queued submissions.
+- Gateway mic STT reconnects with capped exponential backoff after normal EOF, transient errors, or excessive audio backpressure. Drop audio during reconnect and discard the old queue. Preserve finalized regions awaiting Jev/debounce across clean EOF, but invalidate pending decisions on interrupted speech or errors. Authentication/access/invalid-request and malformed-transcript errors stop the run. Each new stream gets fresh transcript bookkeeping with an offset to preserve the session clock. Model switching deliberately reconnects STT and invalidates pending decisions; capture and chat remain active. WAV input finalizes once. Browser Stop, tab closure, or ten seconds without PCM releases capture and cancels the session.
+- Optional Deepgram STT: reconnect backoff 250ms → 4s. Both adapters surface `stt_disconnected`; error disconnects and model switches discard pending filter state and suppress queued submissions. Clean Gateway EOF is the finalized-region exception described above.
 - Jev: retry once on 429/5xx with jitter; then hold as unclear
 - Malformed answers → unclear; don't crash harness
 

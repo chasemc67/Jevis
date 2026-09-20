@@ -7,6 +7,7 @@ import { createTextFeed } from './feed/textFeed.js';
 import { SpeechFilter } from './filter/controller.js';
 import { FixtureJevEvaluator, loadFixture, replayFixture } from './fixtures/replay.js';
 import { GatewayJevClient } from './jev/client.js';
+import { BrowserAudioSource } from './mic/browser.js';
 import { SoxAudioSource } from './mic/sox.js';
 import { DeepgramStt } from './stt/deepgram.js';
 import { GatewayStt } from './stt/gateway.js';
@@ -36,7 +37,8 @@ Examples:
   npm run stt
   npm run mic
 
-Live STT and Jev use AI_GATEWAY_API_KEY. Audio modes require Homebrew SoX.
+Live STT and Jev use AI_GATEWAY_API_KEY. UI mic uses browser permission and
+a device picker. CLI audio/WAV require SoX.
 Copy .env.example to .env and fill in the key locally. Deepgram is optional.
 Always-on audio includes ambient speech; Ctrl-C stops capture and discards
 pending segments. No agent or tools run in Phase 0.
@@ -98,7 +100,7 @@ async function main(): Promise<void> {
       onConnection: connected => filter ? filter.onConnection(connected) : log(connected ? 'stt_connected' : 'stt_disconnected'),
       log,
     };
-    let source: SoxAudioSource | undefined;
+    let source: SoxAudioSource | BrowserAudioSource | undefined = controls?.browserAudio;
     let stt: SttSession | undefined;
     let unsubscribeModel: (() => void) | undefined;
     let cleanupPromise: Promise<void> | undefined;
@@ -130,18 +132,25 @@ async function main(): Promise<void> {
       if (fixture) await replayFixture(fixture, callbacks, { signal, speed });
       else {
         stt = new SttSession(callbacks, (model, adapterCallbacks) => config.sttProvider === 'gateway'
-          ? new GatewayStt({ apiKey: config.gatewayApiKey!, model, callbacks: adapterCallbacks })
+          ? new GatewayStt({ apiKey: config.gatewayApiKey!, model, callbacks: adapterCallbacks, continuous: mode === 'mic' })
           : new DeepgramStt({ apiKey: config.deepgramApiKey!, callbacks: adapterCallbacks }));
         if (config.sttProvider === 'gateway') unsubscribeModel = controls?.onSttModelChange(model => stt!.setModel(model));
         await stt.setModel(controls?.sttModel ?? config.sttModel);
         if (signal.aborted) return;
-        source = new SoxAudioSource({
-          kind: mode as 'mic' | 'wav', wavPath: values.file,
-          soxPath: config.soxPath, device: config.micDevice, debugAudio: config.debugAudio,
-          sampleRate: config.sttProvider === 'gateway' ? 24_000 : 16_000,
-          onFrame: frame => { stt!.sendAudio(frame); }, log,
-        });
-        await source.start();
+        if (mode === 'mic' && controls) {
+          if (!(source instanceof BrowserAudioSource)) throw new Error('UI microphone sessions require browser audio.');
+          await source.start(frame => { stt!.sendAudio(frame); });
+        } else {
+          source = new SoxAudioSource({
+            kind: mode as 'mic' | 'wav', wavPath: values.file,
+            soxPath: config.soxPath, device: config.micDevice, debugAudio: config.debugAudio,
+            sampleRate: config.sttProvider === 'gateway' ? 24_000 : 16_000,
+            onFrame: frame => { stt!.sendAudio(frame); }, log,
+          });
+          await source.start();
+        }
+        // Mic adapters keep done pending across reconnects; only fatal errors
+        // or capture shutdown end the run. WAV still drains its tail once.
         await Promise.race([source.done, stt.done]);
         unsubscribeModel?.();
         if (!signal.aborted && mode === 'wav') await stt.finalize();

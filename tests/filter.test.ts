@@ -187,3 +187,16 @@ test('synchronous evaluator exceptions fail closed and release the slot', async 
   assert.equal(filter.counters.jev_errors, 1);
   await filter.finish(); await filter.stop();
 });
+
+test('debounce-emitted regions accept later requests without restarting the filter', async () => {
+  const { filter, clock, queue } = harness({ evaluate: async input => result(input) }, { regionSilenceMs: 5000 });
+  for (let turn = 0; turn < 3; turn++) {
+    filter.onTranscript(event(`request ${turn + 1}`, turn * 2000));
+    await settle();
+    await clock.advance(1500);
+    assert.equal(queue.segments.length, turn + 1);
+  }
+  assert.deepEqual(queue.segments.map(segment => segment.text), ['request 1', 'request 2', 'request 3']);
+  assert.equal(new Set(queue.segments.map(segment => segment.regionId)).size, 3);
+  await filter.stop();
+});
