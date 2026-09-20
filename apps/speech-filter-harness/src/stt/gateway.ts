@@ -12,7 +12,9 @@ export const GATEWAY_STT_SAMPLE_RATE = 24_000;
 const PCM_BYTES_PER_MS = GATEWAY_STT_SAMPLE_RATE * 2 / 1000;
 const MAX_QUEUED_AUDIO_BYTES = GATEWAY_STT_SAMPLE_RATE * 2;
 type TranscriptPart = Extract<TranscriptionStreamPart, { type: 'transcript-delta' | 'transcript-partial' | 'transcript-final' }>;
-class GatewaySttError extends Error {}
+class GatewaySttError extends Error {
+  constructor(message: string, readonly retryable = true) { super(message); }
+}
 
 function timestamp(value: number | undefined): number | undefined {
   if (value === undefined) return undefined;
@@ -105,6 +107,9 @@ export interface GatewaySttOptions {
   transcribe?: (options: Parameters<typeof streamTranscribe>[0]) => Pick<StreamTranscriptionResult, 'fullStream'>;
   connectTimeoutMs?: number;
   finalizeTimeoutMs?: number;
+  /** Keep a microphone session alive across provider stream endings/outages. */
+  continuous?: boolean;
+  reconnectDelayMs?: number;
 }
 
 /** One cancellable Gateway session; switching models creates a fresh instance. */
@@ -117,9 +122,15 @@ export class GatewayStt {
   private rejectConnection?: (error: Error) => void;
   private connectionPromise?: Promise<void>;
   private connectTimer?: ReturnType<typeof setTimeout>;
-  private readonly abort = new AbortController();
+  private abort = new AbortController();
   private reader?: ReadableStreamDefaultReader<TranscriptionStreamPart>;
-  private readonly normalizer = new GatewayTranscriptNormalizer();
+  private normalizer = new GatewayTranscriptNormalizer();
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnectAttempt = 0;
+  private reconnects = 0;
+  private streamOffsetMs = 0;
+  private lastEventEndMs = 0;
+  private unfinishedTranscript = false;
   private readonly audioQueue: Buffer[] = [];
   private queuedBytes = 0;
   private audioBytes = 0;
@@ -143,22 +154,35 @@ export class GatewayStt {
 
   get connected(): boolean { return this.isConnected; }
   get stats(): { droppedAudioFrames: number; reconnects: number; malformedEvents: number } {
-    return { droppedAudioFrames: this.droppedFrames, reconnects: 0, malformedEvents: this.malformedEvents };
+    return { droppedAudioFrames: this.droppedFrames, reconnects: this.reconnects, malformedEvents: this.malformedEvents };
   }
 
   connect(): Promise<void> {
     if (this.connectionPromise) return this.connectionPromise;
     if (this.stopped || this.finishing) return Promise.reject(new Error('STT connection stopped.'));
     this.options.callbacks.onConnection(false);
-    this.options.callbacks.log('stt_connecting', { provider: 'gateway', model: this.model });
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       this.resolveConnection = resolve;
       this.rejectConnection = reject;
     });
     void this.connectionPromise.catch(() => {});
+    this.openStream();
+    return this.connectionPromise;
+  }
+
+  private openStream(): void {
+    if (this.stopped || this.finishing || this.failure) return;
+    const abort = this.abort = new AbortController();
+    this.streamOffsetMs = Math.max(this.lastEventEndMs, this.streamOffsetMs + this.audioBytes / PCM_BYTES_PER_MS);
+    this.audioBytes = 0;
+    this.normalizer = new GatewayTranscriptNormalizer();
+    this.unfinishedTranscript = false;
+    this.nonemptyTranscriptEvents = 0;
+    this.options.callbacks.log('stt_connecting', { provider: 'gateway', model: this.model });
     this.connectTimer = setTimeout(() => this.fail(new Error('Gateway STT connection timed out.')), this.options.connectTimeoutMs ?? 10_000);
     const audio = new ReadableStream<Uint8Array | string>({
       pull: controller => {
+        if (abort.signal.aborted) { controller.close(); return; }
         // HWM=0 prevents eager pull. Gateway reads audio only after its socket
         // opens, so this is the SDK-supported point to start microphone capture.
         this.markConnected();
@@ -167,18 +191,17 @@ export class GatewayStt {
         if (this.finishing || this.stopped || this.failure) { controller.close(); return; }
         return new Promise<void>(resolve => { this.pendingAudio = { controller, resolve }; });
       },
-      cancel: () => this.clearAudio(),
+      cancel: () => { if (this.abort === abort) this.clearAudio(); },
     }, { highWaterMark: 0 });
     try {
       const result = (this.options.transcribe ?? streamTranscribe)({
         model: createGateway({ apiKey: this.options.apiKey }).transcriptionModel(this.model),
         audio, inputAudioFormat: { type: 'audio/pcm', rate: GATEWAY_STT_SAMPLE_RATE },
-        abortSignal: this.abort.signal,
+        abortSignal: abort.signal,
       });
       this.reader = result.fullStream.getReader();
-      this.pump = this.consume();
+      this.pump = this.consume(this.reader, abort.signal);
     } catch (error) { this.fail(this.safeError(error)); }
-    return this.connectionPromise;
   }
 
   private markConnected(): void {
@@ -193,13 +216,16 @@ export class GatewayStt {
     this.rejectConnection = undefined;
   }
 
-  private async consume(): Promise<void> {
+  private async consume(reader: ReadableStreamDefaultReader<TranscriptionStreamPart>, signal: AbortSignal): Promise<void> {
     try {
-      while (!this.stopped && !this.failure) {
-        const { value: part, done } = await this.reader!.read();
-        if (this.stopped || this.failure) return;
+      while (!signal.aborted) {
+        const { value: part, done } = await reader.read();
+        if (signal.aborted) return;
         if (done) {
-          if (!this.finishing) throw new GatewaySttError('Gateway STT stream ended before audio input finished.');
+          if (!this.finishing) {
+            this.fail(new GatewaySttError('Gateway STT stream ended before audio input finished.'), !this.unfinishedTranscript);
+            return;
+          }
           this.resolveDone();
           return;
         }
@@ -209,16 +235,24 @@ export class GatewayStt {
         try { event = this.normalizer.apply(part, this.audioBytes / PCM_BYTES_PER_MS); }
         catch { this.malformedEvents++; throw new GatewaySttError('Gateway STT returned malformed or overlapping transcript events; restart the stream.'); }
         if (!event) continue;
-        if (event.words.length) this.nonemptyTranscriptEvents++;
+        if (event.words.length) { this.nonemptyTranscriptEvents++; this.reconnectAttempt = 0; }
+        this.unfinishedTranscript = !event.isFinal && event.words.length > 0;
+        // Provider timestamps/IDs restart at zero on every stream. Keep the
+        // filter's clock monotonic when a normal EOF preserves a sealed final.
+        event = {
+          ...event, startMs: event.startMs + this.streamOffsetMs, endMs: event.endMs + this.streamOffsetMs,
+          words: event.words.map(word => ({ ...word, startMs: word.startMs + this.streamOffsetMs, endMs: word.endMs + this.streamOffsetMs })),
+        };
+        this.lastEventEndMs = Math.max(this.lastEventEndMs, event.endMs);
         this.options.callbacks.onTranscript(event);
         if (event.isFinal && event.words.length) this.options.callbacks.onBoundary('endpoint', event.endMs);
       }
     } catch (error) {
-      if (this.stopped || this.failure) return;
+      if (signal.aborted) return;
       // The SDK rejects finish.text="" even for a valid all-silence input.
       if (this.finishing && this.nonemptyTranscriptEvents === 0 && NoTranscriptGeneratedError.isInstance(error)) {
         this.resolveDone();
-      } else this.fail(this.safeError(error));
+      } else this.fail(this.safeError(error), NoTranscriptGeneratedError.isInstance(error) && !this.unfinishedTranscript);
     }
   }
 
@@ -254,7 +288,11 @@ export class GatewayStt {
   private clearAudio(): void {
     this.audioQueue.length = 0;
     this.queuedBytes = 0;
-    this.pendingAudio?.resolve();
+    if (this.pendingAudio) {
+      // Release a pending SDK read even if it does not react to abort itself.
+      try { this.pendingAudio.controller.close(); } catch { /* Already canceled. */ }
+      this.pendingAudio.resolve();
+    }
     this.pendingAudio = undefined;
   }
 
@@ -271,28 +309,48 @@ export class GatewayStt {
     else if (status === 404 || type === 'model_not_found') message = 'The selected transcription model is unavailable for this Gateway account.';
     else if (status === 429 || type === 'rate_limit_exceeded') message = 'Rate limit exceeded; wait before restarting the stream.';
     else if (status === 400 || type === 'invalid_request_error') message = 'Gateway rejected the transcription request.';
-    return new GatewaySttError(`Gateway STT (${this.model}): ${message}`);
+    const fatal = status === 400 || status === 401 || status === 403 || status === 404 ||
+      ['authentication_error', 'forbidden', 'model_not_found', 'invalid_request_error'].includes(String(type));
+    return new GatewaySttError(`Gateway STT (${this.model}): ${message}`, !fatal);
   }
 
-  private fail(error: Error): void {
+  private fail(error: Error, cleanEnd = false): void {
     if (this.failure || this.stopped) return;
-    this.failure = error;
     if (this.connectTimer) clearTimeout(this.connectTimer);
     this.connectTimer = undefined;
-    this.rejectConnection?.(error);
-    this.rejectConnection = undefined;
-    this.resolveConnection = undefined;
-    this.disconnect('provider_error');
+    const retry = this.options.continuous && !this.finishing &&
+      (!(error instanceof GatewaySttError) || error.retryable);
+    // A completed final is still awaiting Jev/debounce. Normal provider EOF
+    // must not revoke it; errors/unfinished hypotheses still fail closed.
+    this.disconnect(cleanEnd ? 'stream_ended' : 'provider_error', !(retry && cleanEnd));
     this.abort.abort(error);
     this.clearAudio();
     void this.reader?.cancel(error).catch(() => {});
+    if (retry) {
+      if (this.reconnectTimer) return;
+      const delayMs = Math.min(4000, (this.options.reconnectDelayMs ?? 250) * 2 ** Math.min(this.reconnectAttempt++, 4));
+      this.reconnects++;
+      this.options.callbacks.log('stt_reconnect', {
+        provider: 'gateway', model: this.model, reconnects: this.reconnects,
+        delayMs, reason: cleanEnd ? 'stream_ended' : 'provider_error',
+      });
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = undefined;
+        this.openStream();
+      }, delayMs);
+      return;
+    }
+    this.failure = error;
+    this.rejectConnection?.(error);
+    this.rejectConnection = undefined;
+    this.resolveConnection = undefined;
     this.rejectDone(error);
   }
 
-  private disconnect(reason: string): void {
+  private disconnect(reason: string, notify = true): void {
     if (!this.isConnected) return;
     this.isConnected = false;
-    this.options.callbacks.onConnection(false);
+    if (notify) this.options.callbacks.onConnection(false);
     this.options.callbacks.log('stt_disconnected', { provider: 'gateway', model: this.model, reason });
   }
 
@@ -307,6 +365,8 @@ export class GatewayStt {
     if (this.stopped || !this.connectionPromise) return;
     if (!this.connected) { await this.close(); return; }
     this.finishing = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
     const pending = this.pendingAudio;
     if (pending) {
       this.pendingAudio = undefined;
@@ -333,6 +393,8 @@ export class GatewayStt {
     if (this.stopped) return;
     this.stopped = true;
     this.finishing = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
     if (this.connectTimer) clearTimeout(this.connectTimer);
     this.connectTimer = undefined;
     this.rejectConnection?.(new Error('STT connection stopped.'));
