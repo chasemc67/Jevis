@@ -1,18 +1,7 @@
-# Skills
+# Vendored skills
 
-## `typesafe-ai` (Jev / TypeSafe System One)
+Agents must read [`typesafe-ai/SKILL.md`](typesafe-ai/SKILL.md) before changing the Jev integration, including prompts, question shapes, or Gateway wiring. The skill is vendored from [typesafe-ai/skills](https://github.com/typesafe-ai/skills), with its [MIT license](typesafe-ai/LICENSE) preserved.
 
-Vendored from [typesafe-ai/skills](https://github.com/typesafe-ai/skills) so agents working in this repo know how to use **Jev**.
+Live documentation at [docs.typesafe.ai](https://docs.typesafe.ai) remains the source of truth; use the [documentation index](https://docs.typesafe.ai/llms.txt) to find current guidance.
 
-- Read [`typesafe-ai/SKILL.md`](./typesafe-ai/SKILL.md) before changing Jev prompts, question shapes, or Gateway wiring.
-- Live docs remain the source of truth: https://docs.typesafe.ai/llms.txt
-- **This project calls Jev only through Vercel AI Gateway** as `typesafe-ai/jev` (see `ARCHITECTURE.md`). Never call the TypeSafe API directly from Jevis.
-
-Optional install into Claude Code / Codex plugin hosts:
-
-```bash
-claude plugin marketplace add typesafe-ai/skills
-claude plugin install typesafe@typesafe-ai
-```
-
-Upstream snapshots of plugin manifests are under `.claude-plugin/typesafe-upstream-*.json`.
+**Jevis uses Vercel AI Gateway model `typesafe-ai/jev`. Never call the TypeSafe API directly from this project.** See [ARCHITECTURE.md](../ARCHITECTURE.md) for the integration boundary.

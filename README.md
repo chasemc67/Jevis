@@ -2,7 +2,48 @@
 
 A local TypeScript harness for **microphone → Deepgram Nova-3 streaming STT → Jev directed-speech filter → visible text queue**. Jev runs exclusively through Vercel AI Gateway as `typesafe-ai/jev`. The only downstream implementations print or hold filtered text; no agent, tools, TTS, or wake-word system is wired in.
 
-The implementation follows [ARCHITECTURE.md](ARCHITECTURE.md). JSON word-event fixtures make the filter runnable without a microphone. A clearly marked scripted dry-run also works without API keys or network access.
+The implementation follows [ARCHITECTURE.md](ARCHITECTURE.md). JSON word-event fixtures make the filter runnable without a microphone. A clearly marked scripted dry-run also works without API keys or internet access.
+
+Agents changing the Jev integration should first read the vendored [TypeSafe / Jev skill](skills/typesafe-ai/SKILL.md) and [project skill guidance](skills/README.md). Live [TypeSafe documentation](https://docs.typesafe.ai) remains the source of truth; this project always uses Vercel AI Gateway model `typesafe-ai/jev`, never the direct TypeSafe API.
+
+## Offline visual demo
+
+With Node 22+ installed, run:
+
+```sh
+npm install
+npm run demo:ui
+```
+
+Open **http://127.0.0.1:3210** and click **Run offline demo**. No `.env`, API keys, microphone, or SoX is required. The fixture feeds paced partial/final words through the existing filter, using its scripted labels as Jev output. Both `npm run demo:ui` and its alias `npm run ui` remain offline even when keys are configured. `npm run demo` runs the same offline scenario as console JSON.
+
+| Panel | What it shows | Visibility |
+| --- | --- | --- |
+| **A. Chat stream** | A timestamped message for each actual `queue_submit`, containing only the gated, debounced `words[startIndex…]` suffix. This is what a downstream agent would see. | Always visible; no hide control |
+| **B. Raw transcript** | Rolling unfiltered STT partial/final text, including ambient speech and interim revisions. The offline fixture supplies the same word events. | On by default; toggle its control or press **R** |
+| **C. Jev / window / decision** | Candidate window text, indexed words and directed-span highlighting, Choice probabilities, Boolean `is_directed` probability, hold / ambient-exclude / ready gate, debounce countdown/fire, and inflight/stale counters. Dry-run judgments are marked as scripted. | On by default; toggle its control or press **J** |
+
+The Raw and Jev toggles are independent and only change visibility; they preserve state and the stream keeps running. Click **Stop** to stop the current stream. After the fixture finishes, inspect the result or click **Replay offline demo** to clear the previous run and start fresh. The UI retains bounded recent history for the current run. Use **Evaluation history** to inspect an earlier directed window after the unclear region arrives, or **Follow latest** to resume live updates.
+
+The local server stays up until **Ctrl+C** in the terminal. Use `npm run demo:ui -- --port 3211` to choose another port. The UI uses Node's built-in HTTP server and server-sent events (SSE), binds only to `127.0.0.1`, and needs no external assets or additional runtime dependencies.
+
+Watch “We already ate dinner. Could you summarize my notes?” enter the Raw panel. The decision panel excludes the ambient prefix, selects `startIndex = 4`, and counts down the debounce. Only **“Could you summarize my notes?”** enters Chat. Ambient-only and unclear regions create no chat messages. Scripted labels demonstrate pipeline behavior; they do not measure Jev accuracy.
+
+When keys are available, the same UI works with real Jev and live STT:
+
+```sh
+# AI_GATEWAY_API_KEY: fixture words + real Jev.
+npm run fixture -- --ui
+
+# DEEPGRAM_API_KEY and AI_GATEWAY_API_KEY: microphone or WAV + real Jev.
+npm run mic -- --ui
+npm run wav -- --file /path/to/recording.wav --ui
+
+# DEEPGRAM_API_KEY only: inspect live STT; Jev and Chat stay idle.
+npm run stt -- --ui
+```
+
+Open the printed local URL and click the **Start** button for the selected mode. Live audio modes require SoX and microphone mode also requires an input device and permission as described below.
 
 ## Setup on Apple Silicon macOS
 
@@ -44,6 +85,7 @@ Run commands from the repository root. The CLI loads `.env`; exported environmen
 | Command | Input and behavior | Credentials |
 | --- | --- | --- |
 | `npm run demo` | Timed canned words and explicitly scripted classification; fully offline | None |
+| `npm run demo:ui` / `npm run ui` | Same offline pipeline in the local three-panel web UI | None |
 | `npm run fixture` | Same canned words, evaluated by real Jev through Gateway | Gateway |
 | `npm run mic` | Always-on microphone → Deepgram → Jev → console | Deepgram + Gateway |
 | `npm run stt` | Microphone → Deepgram, printing partial/final text only | Deepgram |
@@ -72,7 +114,7 @@ npm start -- --mode fixture --dry-run
 npm run dev -- --help
 ```
 
-`--mode` accepts `mic`, `wav`, or `fixture`. `--file` supplies a WAV or JSON fixture. The default fixture is `apps/speech-filter-harness/fixtures/ambient/mixed.json`. `--downstream` accepts `console` (default) or `queue`; the memory queue retains up to 1,000 segments and is lost on exit. `--dry-run` is available only for JSON fixtures. `--stt-only` bypasses Jev for input validation. `--speed` is a positive JSON replay speed multiplier; debounce, silence, and model deadlines stay in real wall-clock time, so use speed `1` when checking the bundled expected outputs.
+`--mode` accepts `mic`, `wav`, or `fixture`. `--file` supplies a WAV or JSON fixture. The default fixture is `apps/speech-filter-harness/fixtures/ambient/mixed.json`. `--ui` adds the local visual mode to any input mode; `--port` sets its port (default `3210`). `--downstream` accepts `console` (default) or `queue`; the memory queue retains up to 1,000 segments and is lost on exit. `--dry-run` is available only for JSON fixtures. `--stt-only` bypasses Jev for input validation. `--speed` is a positive JSON replay speed multiplier; debounce, silence, and model deadlines stay in real wall-clock time, so use speed `1` when checking the bundled expected outputs.
 
 WAV mode uses the same streaming STT path as the microphone. It does not use batch transcription, and it does not play the recording through speakers. WAV input can have another sample rate/channel count; SoX converts it to the required PCM format. A JSON fixture is offline with respect to STT; it still calls Gateway unless `--dry-run` or `--stt-only` is supplied.
 
@@ -168,7 +210,7 @@ Grok Voice Think Fast 2.0 is a speech-to-speech WebSocket model: it accepts audi
 
 ## Privacy and validation limits
 
-The microphone is always on while mic mode runs and captures ambient conversations. Raw audio goes only to the chosen STT service (Deepgram here); transcript text and candidate windows go to Vercel AI Gateway/Jev. Console transcripts and queue data stay in the local process unless you redirect or share them. Audio is not recorded by the harness. JSON dry-run makes no network requests; real fixture replay sends fixture text to Gateway. ZDR is an optional routing request, not a claim about the STT provider's retention policy.
+The microphone is always on while a mic stream runs and captures ambient conversations. Raw audio goes only to the chosen STT service (Deepgram here); transcript text and candidate windows go to Vercel AI Gateway/Jev. Console transcripts and queue data stay local unless you redirect or share them; visual mode also sends these events to the local browser. Audio is not recorded by the harness. JSON dry-run makes no cloud requests; its UI communicates only with the local server. Real fixture replay sends fixture text to Gateway. ZDR is an optional routing request, not a claim about the STT provider's retention policy.
 
 Implementation was developed on Apple Silicon with Node 24.20.0 and Homebrew SoX 14.4.2 installed from bottles. Tests and the offline demo exercise the pipeline without credentials. **Real Deepgram/Jev classification and live microphone capture still require your API keys, a connected input device, and the macOS permission described above.** The machine had no input device when inspected; successful offline tests do not replace a live acceptance run.
 

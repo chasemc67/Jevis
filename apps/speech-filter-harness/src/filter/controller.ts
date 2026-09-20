@@ -101,6 +101,8 @@ export class SpeechFilter {
     this.dropObsoleteJob();
     region.debounce.schedule(this.config.debounceMs, () => {
       region.debounceReady = true;
+      this.log('debounce_fired', { regionId: region.id, seq: region.seq });
+      this.preview(region);
       // Profiling N=2/3 must still evaluate the final residual words.
       if (region.requestedSeq !== region.seq) this.request(region);
       this.tryEmit(region);
@@ -205,7 +207,13 @@ export class SpeechFilter {
     // slow to cancel never overlaps the next evaluate.
     this.running = (async () => {
       try {
-        const result = await Promise.resolve().then(() => this.evaluator.evaluate(job.input, controller.signal));
+        const result = await Promise.resolve().then(() => {
+          this.log('evaluation_requested', {
+            regionId: job.input.regionId, seq: job.input.seq,
+            fullTranscript: job.input.fullTranscript, candidates: job.input.candidates,
+          });
+          return this.evaluator.evaluate(job.input, controller.signal);
+        });
         if (!this.isCurrent(job, controller.signal)) { this.countStale(job); return; }
         const { region, input } = job;
         region.gate = confidenceGate(result, input.candidates, this.config.directedThreshold, this.config.booleanThreshold);
@@ -219,6 +227,8 @@ export class SpeechFilter {
         this.log('jev_result', {
           regionId: region.id, seq: input.seq, latencyMs: result.latencyMs,
           gate: region.gate.kind, decisions: result.decisions, error: result.error,
+          fullTranscript: input.fullTranscript, candidates: input.candidates,
+          startIndex: region.startIndex, excludedBefore: region.excludedBefore,
         });
         this.preview(region);
       } catch {
@@ -228,6 +238,7 @@ export class SpeechFilter {
           job.region.appliedSeq = job.input.seq;
           this.counters.jev_errors++;
           this.log('jev_error', { regionId: job.region.id, seq: job.input.seq, gate: 'unclear' });
+          this.preview(job.region);
         }
       } finally {
         this.flight = undefined;
@@ -294,6 +305,10 @@ export class SpeechFilter {
       regionId: region.id, seq: region.seq, startIndex: region.startIndex,
       excludedBefore: region.excludedBefore, gate: region.gate.kind,
       fullTranscript: region.words.map(word => word.text).join(' '),
+      words: region.words,
+      decisionFresh: region.appliedSeq === region.seq,
+      debounceDueAt: region.lastWordAt + this.config.debounceMs,
+      debounceMs: this.config.debounceMs, debounceReady: region.debounceReady,
       preview: region.gate.kind === 'directed' && region.appliedSeq === region.seq
         ? region.words.slice(region.gate.startIndex).map(word => word.text).join(' ') : '',
     });
