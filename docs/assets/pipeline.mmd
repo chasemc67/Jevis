@@ -1,0 +1,25 @@
+flowchart TB
+    subgraph Input["1 · Listen"]
+      direction LR
+      Mic["Microphone / WAV"] --> STT["Gateway streaming STT"]
+      STT --> Words["Normalize word events"]
+      Fixture["JSON fixture"] --> Words
+    end
+    subgraph Filter["2 · Evaluate candidate text"]
+      direction LR
+      Window["Sliding window<br/>suffixes + startIndex"] --> Jev["Jev via Gateway<br/>Choice + Boolean"]
+    end
+    subgraph Output["3 · Submit only directed speech"]
+      direction LR
+      Gate{"Confidence gate"} -->|directed| Debounce["Debounce<br/>1500 ms quiet"]
+      Debounce -->|still valid| Chat["Chat stream<br/>submitted segments only"]
+      Gate -->|ambient / unclear / error| Hold["No submit<br/>keep listening"]
+    end
+    Input --> Filter
+    Filter --> Output
+    classDef accepted fill:#d8f5e8,stroke:#187653,color:#123d2c;
+    class Chat,Debounce accepted;
+    classDef default fill:#eef3f6,stroke:#708090,color:#17262e;
+    style Input fill:#f6f8fa,stroke:#d0d7de,color:#17262e;
+    style Filter fill:#f6f8fa,stroke:#d0d7de,color:#17262e;
+    style Output fill:#f6f8fa,stroke:#d0d7de,color:#17262e;

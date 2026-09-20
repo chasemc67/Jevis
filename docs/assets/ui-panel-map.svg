@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="550" viewBox="0 0 1080 550" role="img" aria-labelledby="title desc">
+<title id="title">Jevis demo UI panel map</title>
+<desc id="desc">A schematic of the local demo: run and stop buttons, Raw transcript and Jev decisions visibility toggles, the Gateway STT model selector, and three panels. Chat is always visible and contains only submitted segments. Raw transcript shows unfiltered speech. Jev decisions shows the window, confidence, and debounce. R and J toggle the inspectors.</desc>
+<style>text{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif;fill:#ecf1ef}.muted{fill:#9cacae}.mint{fill:#9be2be}.amber{fill:#e8c282}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.label{font-weight:650;letter-spacing:1px}</style>
+<rect width="1080" height="550" rx="14" fill="#101519"/>
+<text x="28" y="30" font-size="12" class="mint label" >JEVIS / SPEECH FILTER LAB</text>
+<text x="28" y="65" font-size="28" class="" font-weight="650">The demo, at a glance</text>
+<text x="1052" y="35" font-size="12" class="muted label" text-anchor="end">UI SCHEMATIC</text>
+<text x="1052" y="64" font-size="14" class="muted mono" text-anchor="end">127.0.0.1:3210</text>
+<rect x="28" y="89" width="1024" height="114" rx="9" fill="#141c20" stroke="#303c43"/>
+<rect x="44" y="104" width="156" height="34" rx="6" fill="#9be2be" stroke="#9be2be"/>
+<text x="57" y="126" font-size="16" class="" style="fill:#142a22;font-weight:650">Run offline demo</text>
+<rect x="211" y="104" width="62" height="34" rx="6" fill="#202a30" stroke="#303c43"/>
+<text x="226" y="126" font-size="15" class="muted" >Stop</text>
+<text x="291" y="126" font-size="14" class="muted" >Fixture · scripted labels · no keys</text>
+<text x="661" y="126" font-size="15" class="" >☑ Raw transcript [R]</text>
+<text x="857" y="126" font-size="15" class="" >☑ Jev decisions [J]</text>
+<path d="M44 150H1036" stroke="#303c43"/>
+<text x="44" y="179" font-size="14" class="muted" >STT model</text>
+<rect x="129" y="160" width="430" height="29" rx="5" fill="#202a30" stroke="#303c43"/>
+<text x="141" y="180" font-size="15" class="mono" >openai/gpt-realtime-whisper  ▾</text>
+<text x="578" y="180" font-size="14" class="muted" >or xai/grok-stt · live Gateway input</text>
+<rect x="28" y="223" width="315" height="262" rx="9" fill="#171e23" stroke="#303c43"/>
+<text x="45" y="246" font-size="11" class="muted label" >A / AGENT INPUT</text>
+<text x="45" y="275" font-size="23" class="" font-weight="600">Chat stream</text>
+<rect x="227" y="256" width="99" height="24" rx="4" fill="#24362e" stroke="#41514d"/>
+<text x="238" y="272" font-size="11" class="mint label" >ALWAYS ON</text>
+<text x="45" y="302" font-size="15" class="muted" >Only gated, debounced submits.</text>
+<path d="M28 318H343" stroke="#303c43"/>
+<rect x="45" y="338" width="281" height="86" rx="8" fill="#20332b" stroke="#395948"/>
+<text x="59" y="360" font-size="11" class="mint label" >SUBMITTED SEGMENT</text>
+<text x="59" y="386" font-size="19" class="" >Could you summarize</text>
+<text x="59" y="410" font-size="19" class="" >my notes?</text>
+<text x="45" y="464" font-size="14" class="mint" >1 submitted message</text>
+<rect x="360" y="223" width="277" height="262" rx="9" fill="#171e23" stroke="#303c43"/>
+<text x="377" y="246" font-size="11" class="muted label" >B / BEFORE THE FILTER</text>
+<text x="377" y="275" font-size="23" class="" font-weight="600">Raw transcript</text>
+<text x="377" y="302" font-size="15" class="muted" >Toggle with R</text>
+<path d="M360 318H637" stroke="#303c43"/>
+<text x="377" y="346" font-size="18" class="muted" >We already ate dinner.</text>
+<text x="377" y="372" font-size="18" class="" >Could you summarize</text>
+<text x="377" y="398" font-size="18" class="" >my notes?</text>
+<text x="377" y="442" font-size="14" class="muted" >Partial + final STT events</text>
+<text x="377" y="464" font-size="14" class="muted" >Includes ambient speech</text>
+<rect x="654" y="223" width="398" height="262" rx="9" fill="#171e23" stroke="#303c43"/>
+<text x="671" y="246" font-size="11" class="muted label" >C / INSIDE THE FILTER</text>
+<text x="671" y="275" font-size="23" class="" font-weight="600">Jev decisions</text>
+<text x="671" y="302" font-size="15" class="muted" >Toggle with J</text>
+<path d="M654 318H1052" stroke="#303c43"/>
+<rect x="671" y="332" width="364" height="38" rx="6" fill="#11191d" stroke="#304047"/>
+<text x="684" y="356" font-size="15" class="mint mono" >startIndex 4 · excludedBefore 4</text>
+<text x="671" y="396" font-size="16" class="" >Choice + Boolean → confidence gate</text>
+<text x="671" y="427" font-size="14" class="muted" >Submit debounce</text>
+<text x="1035" y="427" font-size="14" class="mint mono" text-anchor="end">1,500 ms</text>
+<rect x="671" y="437" width="364" height="4" rx="2" fill="#2d3c43" stroke="#2d3c43"/>
+<rect x="671" y="437" width="255" height="4" rx="2" fill="#9be2be" stroke="#9be2be"/>
+<text x="671" y="466" font-size="14" class="muted" >Candidate history · scores · stale counts</text>
+<text x="28" y="520" font-size="15" class="muted" >Chat stays visible. Inspectors can be hidden independently.</text>
+<text x="1052" y="520" font-size="13" class="muted" text-anchor="end">Schematic, not a screenshot</text>
+</svg>

@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant S as Mic / Gateway STT
+    participant W as Window + gate
+    participant J as Jev via Gateway
+    participant C as Chat stream
+    Note over S,C: Illustrative evaluation snapshots using fixture text
+    S->>W: We already ate dinner. (words 0..3)
+    W->>J: Evaluate candidate suffixes
+    J-->>W: Ambient with confidence
+    Note over W: excludedBefore = 4<br/>startIndex = null
+    Note over W,C: Raw transcript advances<br/>no chat submission
+    S->>W: Could you summarize my notes? (words 4..8)
+    W->>J: Choice + Boolean for each candidate
+    J-->>W: Directed suffix passes both thresholds
+    Note over W: startIndex = 4<br/>wait for 1500 ms quiet
+    Note over W: Latest decision valid<br/>debounce fires
+    W->>C: Submit words[4..8] once
+    Note over C: One bubble: Could you summarize my notes?

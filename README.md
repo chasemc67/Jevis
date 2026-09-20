@@ -1,246 +1,221 @@
-# Jevis — Phase 0
+# Jevis
 
-A local TypeScript harness for **microphone → Vercel AI Gateway streaming STT → Jev directed-speech filter → visible text queue**. Choose **OpenAI gpt-realtime-whisper** or **xAI grok-stt** in the client. One `AI_GATEWAY_API_KEY` supplies both STT and Jev (`typesafe-ai/jev`). The only downstream implementations print or hold filtered text; no agent, tools, TTS, or wake-word system is wired in.
+**Always-on speech → streaming STT → Jev directed-speech filter → chat.**
 
-The implementation follows [ARCHITECTURE.md](ARCHITECTURE.md). JSON word-event fixtures make the filter runnable without a microphone. A clearly marked scripted dry-run also works without API keys or internet access.
+A TV, a side conversation, and a request to your assistant can share one microphone. They shouldn't share one agent input stream. Jevis transcribes continuously, uses **Jev** to find the words addressed to the assistant, and submits only a confident, debounced span. No wake word required.
 
-Agents changing the Jev integration should first read the vendored [TypeSafe / Jev skill](skills/typesafe-ai/SKILL.md) and [project skill guidance](skills/README.md). Live [TypeSafe documentation](https://docs.typesafe.ai) remains the source of truth; this project always uses Vercel AI Gateway model `typesafe-ai/jev`, never the direct TypeSafe API.
+This is a **Phase 0 TypeScript harness**: inspect the transcript, watch the filter decide, and see exactly what would reach an agent. Chat is a visible output queue; no agent or tools are connected yet.
 
-## Offline visual demo
+![Animated sliding window: ambient words are excluded, startIndex becomes 4, and the directed suffix becomes one chat bubble after debounce.](docs/assets/sliding-window.gif)
 
-With Node 22+ installed, run:
+*Simplified illustration using fixture text and scripted scores. [Static version](docs/assets/sliding-window-poster.png). Live Jev decisions can differ.*
+
+[Run in 5 minutes](#run-in-5-minutes) · [Explore the UI](#explore-the-ui) · [How it works](#how-it-works) · [Commands](#commands-and-configuration) · [Privacy](#privacy-and-phase-0-scope) · [Contribute](#work-on-jevis)
+
+```mermaid
+flowchart TB
+    subgraph Input["1 · Listen"]
+      direction LR
+      Mic["Microphone / WAV"] --> STT["Gateway streaming STT"]
+      STT --> Words["Normalize word events"]
+      Fixture["JSON fixture"] --> Words
+    end
+    subgraph Filter["2 · Evaluate candidate text"]
+      direction LR
+      Window["Sliding window<br/>suffixes + startIndex"] --> Jev["Jev via Gateway<br/>Choice + Boolean"]
+    end
+    subgraph Output["3 · Submit only directed speech"]
+      direction LR
+      Gate{"Confidence gate"} -->|directed| Debounce["Debounce<br/>1500 ms quiet"]
+      Debounce -->|still valid| Chat["Chat stream<br/>submitted segments only"]
+      Gate -->|ambient / unclear / error| Hold["No submit<br/>keep listening"]
+    end
+    Input --> Filter
+    Filter --> Output
+    classDef accepted fill:#d8f5e8,stroke:#187653,color:#123d2c;
+    class Chat,Debounce accepted;
+    classDef default fill:#eef3f6,stroke:#708090,color:#17262e;
+    style Input fill:#f6f8fa,stroke:#d0d7de,color:#17262e;
+    style Filter fill:#f6f8fa,stroke:#d0d7de,color:#17262e;
+    style Output fill:#f6f8fa,stroke:#d0d7de,color:#17262e;
+```
+
+## Run in 5 minutes
+
+### Offline: no keys, no microphone
+
+Install **Node 22+** and npm, then:
 
 ```sh
+git clone https://github.com/chasemc67/Jevis.git
+cd Jevis
 npm install
 npm run demo:ui
 ```
 
-Open **http://127.0.0.1:3210** and click **Run offline demo**. No `.env`, API keys, microphone, or SoX is required. The fixture feeds paced partial/final words through the existing filter, using its scripted labels as Jev output. Both `npm run demo:ui` and its alias `npm run ui` remain offline even when keys are configured. `npm run demo` runs the same offline scenario as console JSON.
+Open **http://127.0.0.1:3210** and click **Run offline demo**. In about 11 seconds:
 
-| Panel | What it shows | Visibility |
-| --- | --- | --- |
-| **A. Chat stream** | A timestamped message for each actual `queue_submit`, containing only the gated, debounced `words[startIndex…]` suffix. This is what a downstream agent would see. | Always visible; no hide control |
-| **B. Raw transcript** | Rolling unfiltered STT partial/final text, including ambient speech and interim revisions. The offline fixture supplies the same word events. | On by default; toggle its control or press **R** |
-| **C. Jev / window / decision** | Candidate window text, indexed words and directed-span highlighting, Choice probabilities, Boolean `is_directed` probability, hold / ambient-exclude / ready gate, debounce countdown/fire, and inflight/stale counters. Dry-run judgments are marked as scripted. | On by default; toggle its control or press **J** |
-
-The Raw and Jev toggles are independent and only change visibility; they preserve state and the stream keeps running. Click **Stop** to stop the current stream. After the fixture finishes, inspect the result or click **Replay offline demo** to clear the previous run and start fresh. The UI retains bounded recent history for the current run. Use **Evaluation history** to inspect an earlier directed window after the unclear region arrives, or **Follow latest** to resume live updates.
-
-The local server stays up until **Ctrl+C** in the terminal. Use `npm run demo:ui -- --port 3211` to choose another port. The UI uses Node's built-in HTTP server and server-sent events (SSE), binds only to `127.0.0.1`, and needs no external assets or additional runtime dependencies.
-
-Watch “We already ate dinner. Could you summarize my notes?” enter the Raw panel. The decision panel excludes the ambient prefix, selects `startIndex = 4`, and counts down the debounce. Only **“Could you summarize my notes?”** enters Chat. Ambient-only and unclear regions create no chat messages. Scripted labels demonstrate pipeline behavior; they do not measure Jev accuracy.
-
-With `AI_GATEWAY_API_KEY` configured, the same UI works with real Jev and live STT:
-
-```sh
-# AI_GATEWAY_API_KEY: fixture words + real Jev.
-npm run fixture -- --ui
-
-# AI_GATEWAY_API_KEY: microphone or WAV streaming STT + real Jev.
-npm run mic -- --ui
-npm run wav -- --file /path/to/recording.wav --ui
-
-# AI_GATEWAY_API_KEY: inspect live STT; Jev and Chat stay idle.
-npm run stt -- --ui
-```
-
-Open the printed local URL and click the **Start** button for the selected mode. Live audio modes require SoX and microphone mode also requires an input device and permission as described below.
-
-The **STT model** control selects **OpenAI gpt-realtime-whisper** (default) or **xAI grok-stt**. The Raw transcript header shows the active model. During a Gateway mic/WAV session, changing it closes the old STT stream and connects the new one without restarting the app or capture. Existing chat/history stay visible; pending filter decisions are invalidated so an old model cannot submit stale text. Audio during reconnection is dropped. WAV playback continues from its current position, so a switch can leave a short transcription gap. In fixture mode, the model selection is a preference only: replay stays offline and the Raw header identifies fixture input.
-
-## Setup on Apple Silicon macOS
-
-Use Node **22+** (the pinned AI SDK 7 and Gateway SDK require it), npm, and Homebrew SoX for audio modes. Node 24 is also supported. From the repo root:
-
-```sh
-brew install node@22 sox
-export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
-npm install
-cp .env.example .env
-npm run check
-npm run demo
-```
-
-Skip the Node installation/PATH change if you already have a supported Node version. JSON fixtures need only Node/npm; SoX is needed for microphone capture and WAV conversion. No Node native audio module is compiled. Homebrew's Apple Silicon SoX bottle provides CoreAudio capture without opening or configuring the Xcode GUI. An initial Homebrew installation may require Apple's command-line tools.
-
-Fill in `AI_GATEWAY_API_KEY` in `.env` locally with a Vercel AI Gateway key that can access the selected streaming STT model and Jev. This is the only key needed for the live path. `STT_MODEL` optionally chooses `openai/gpt-realtime-whisper` (default) or `xai/grok-stt`.
-
-Deepgram is optional/deferred. The existing Nova-3 adapter is available by explicitly setting `STT_PROVIDER=deepgram` and `DEEPGRAM_API_KEY`; it is not required for setup. Older `.env` files that select Deepgram without a Deepgram key automatically use Gateway.
-
-There is no TypeSafe credential or direct TypeSafe API path. `.env`, other local environment files, the `recordings/` directory, build output, and `*.log` files are ignored by git; `.env.example` contains no credentials. Keep personal audio under `recordings/`. Do not add secrets to fixture JSON or commit recordings of private conversations.
-
-### One-time microphone setup
-
-1. Connect an input device if needed. This Mac mini reported **Mac mini Speakers only** during implementation; no microphone input was available. A USB microphone/headset, a display with a microphone, or another supported input is needed.
-2. Open **System Settings → Sound → Input**, select the microphone, and check that the input level moves when you speak. `MIC_DEVICE=default` uses the system input. A CoreAudio device name can be set explicitly through `MIC_DEVICE`.
-3. Run `npm run stt` from the app you intend to use. Allow its microphone permission prompt. If access was denied, open **System Settings → Privacy & Security → Microphone**, enable the launching app (**Terminal**, **iTerm**, or **Codex**, as applicable), and restart the command. If the app is absent from the list, run the capture command from that app to request access.
-4. Once partial/final text appears, run `npm run mic` with the same Gateway key to include Jev.
-
-Use `Ctrl+C` to stop capture and close the STT socket. There is no mute hotkey in Phase 0. With a connected input, local capture can also be checked without keys by running `sox -d -n stat` and stopping it with `Ctrl+C`; this discards samples locally.
-
-If `sox` is not found, set `SOX_PATH=/opt/homebrew/bin/sox`. A capture error or no audio within eight seconds reports the input-device and macOS permission steps. `system_profiler SPAudioDataType` lists available audio hardware.
-
-## Run the harness
-
-Run commands from the repository root. The CLI loads `.env`; exported environment values take precedence.
-
-| Command | Input and behavior | Credentials |
-| --- | --- | --- |
-| `npm run demo` | Timed canned words and explicitly scripted classification; fully offline | None |
-| `npm run demo:ui` / `npm run ui` | Same offline pipeline in the local three-panel web UI | None |
-| `npm run fixture` | Same canned words, evaluated by real Jev through Gateway | Gateway |
-| `npm run mic` | Always-on microphone → Gateway STT → Jev → console | Gateway |
-| `npm run stt` | Microphone → Gateway STT, printing partial/final text only | Gateway |
-| `npm run wav -- --file /path/to/recording.wav` | WAV decoded/resampled and streamed in real time through Gateway STT → Jev | Gateway |
-| `npm run check` | Typecheck, regression tests, and production build | None |
-
-Examples:
-
-```sh
-# Filter into the bounded in-memory queue, still visible in the console.
-npm run mic -- --downstream queue
-
-# Select either Gateway streaming model; --stt-model also selects Gateway.
-npm run mic -- --ui --stt-model openai/gpt-realtime-whisper
-npm run mic -- --ui --stt-model xai/grok-stt
-
-# Exercise ambient-only and ambiguous speech with scripted labels, offline.
-npm run fixture -- --file apps/speech-filter-harness/fixtures/ambient/ambient-only.json --dry-run
-npm run fixture -- --file apps/speech-filter-harness/fixtures/ambient/unclear.json --dry-run
-
-# Run real Jev on a JSON stream; no microphone or Deepgram key is needed.
-npm run fixture -- --file apps/speech-filter-harness/fixtures/ambient/mixed.json
-
-# Test WAV transcription first, without Jev.
-npm run wav -- --file /path/to/recording.wav --stt-only
-
-# Production build and CLI options.
-npm run build
-npm start -- --mode fixture --dry-run
-npm run dev -- --help
-```
-
-`--mode` accepts `mic`, `wav`, or `fixture`. `--file` supplies a WAV or JSON fixture. The default fixture is `apps/speech-filter-harness/fixtures/ambient/mixed.json`. `--ui` adds the local visual mode to any input mode; `--port` sets its port (default `3210`). `--downstream` accepts `console` (default) or `queue`; the memory queue retains up to 1,000 segments and is lost on exit. `--dry-run` is available only for JSON fixtures. `--stt-only` bypasses Jev for input validation. `--speed` is a positive JSON replay speed multiplier; debounce, silence, and model deadlines stay in real wall-clock time, so use speed `1` when checking the bundled expected outputs.
-
-`--stt-model openai/gpt-realtime-whisper|xai/grok-stt` overrides `STT_MODEL` and selects Gateway even if an older `.env` selects Deepgram. Select the optional adapter with `STT_PROVIDER=deepgram` and a Deepgram key.
-
-WAV mode uses the same streaming STT path as the microphone. It does not use batch transcription, and it does not play the recording through speakers. WAV input can have another sample rate/channel count; SoX converts it to the required PCM format. A JSON fixture is offline with respect to STT; it still calls Gateway unless `--dry-run` or `--stt-only` is supplied.
-
-### Expected demo output
-
-`npm run demo` takes about 11 seconds at default timing. It labels all model decisions as a **scripted dry-run**, then replays three regions:
-
-1. “The television is still playing.” — ambient, no submit.
-2. “We already ate dinner. Could you summarize my notes?” — emit only **“Could you summarize my notes?”**, excluding the ambient prefix.
-3. “Maybe later or perhaps tomorrow.” — unclear, no submit.
-
-The two smaller fixtures each emit zero segments. These scripted outputs verify plumbing, candidate indices, and gating; they do **not** establish real Jev accuracy. Real Gateway outcomes can differ and must be observed on your own ambient/directed examples before considering any later agent integration.
-
-Output is one JSON record per line, making transcripts, previews, gates, and queue submissions readable and machine-parseable. Look for STT partial/final records, `startIndex`, filtered previews, Jev decisions/latencies, `queue_submit`, and final counters. `jev_inflight_dropped` counts superseded work and `jev_stale_ignored` counts results that cannot be applied. Transcript control characters are JSON-escaped.
-
-## Configuration
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `STT_PROVIDER` | `gateway` | Gateway streaming STT; optional `deepgram` needs its own key, otherwise falls back to Gateway |
-| `STT_MODEL` | `openai/gpt-realtime-whisper` | Gateway model: `openai/gpt-realtime-whisper` or `xai/grok-stt` |
-| `DEEPGRAM_API_KEY` | unset | Optional; used only when explicitly selecting Deepgram |
-| `JEV_MODEL` | `typesafe-ai/jev` | Fixed Gateway evaluation model; other IDs are rejected |
-| `AI_GATEWAY_API_KEY` | unset | Single key for live Gateway STT and real Jev; no separate TypeSafe key |
-| `JEV_EVERY_N_WORDS` | `1` | Evaluate every new word; `2` or `3` for profiling |
-| `DEBOUNCE_MS` | `1500` | Quiet time before eligible text can submit; range 1000–2000 |
-| `T_DIR_CONFIDENCE` | `0.6` | Minimum Choice probability for `directed` |
-| `T_NOUL` | `0.6` | Minimum Boolean probability for `is_directed` |
-| `K` | `8` | Consider suffix windows of 1 through K words |
-| `WINDOW_MAX_WORDS` | `40` | Bound the words considered in a candidate window |
-| `REGION_SILENCE_MS` | `1500` | Silence that closes a region; range 1500–2000 |
-| `JEV_TIMEOUT_MS` | `4000` | Total evaluation deadline, including transient retry |
-| `GATEWAY_ZERO_DATA_RETENTION` | `false` | Request Gateway zero-data-retention routing when true |
-| `SOX_PATH` | `sox` | SoX executable, optionally an absolute path |
-| `MIC_DEVICE` | `default` | CoreAudio input device |
-| `DEBUG_AUDIO` | `false` | Local RMS/dBFS diagnostics; never used as an intent gate |
-
-### Gateway streaming audio and timing
-
-The Gateway adapter uses AI SDK `experimental_streamTranscribe` with `gateway.transcriptionModel(...)` and a continuous `ReadableStream` of raw PCM. Both selections receive mono, signed 16-bit little-endian PCM at **24 kHz**, in **20 ms / 960-byte** frames. SoX converts microphone/WAV input to that format. See [Gateway streaming transcription](https://vercel.com/docs/ai-gateway/modalities/speech-to-text#streaming-transcription).
-
-The adapter sends the selected model ID, `openai/gpt-realtime-whisper` or `xai/grok-stt`, directly to Gateway.
-
-Gateway transcript deltas, partials, and finals become the same revisable `WordEvent` records that fixtures and Deepgram use. The current SDK exposes segment timing rather than word timing, so the adapter synthesizes coarse word intervals using the transcript and submitted audio duration. Unchanged prefix words keep their intervals across revisions. These approximations allow sliding windows and the Jev loop to run; they are not precise word alignment or speaker diarization. Deltas append text, while partial/final records can replace the current hypothesis. A final commits its text and closes the region.
-
-### Optional Deepgram adapter
-
-Deepgram remains available for later comparison. Its connection is `wss://api.deepgram.com/v1/listen` with these query parameters:
-
-```text
-model=nova-3
-interim_results=true
-smart_format=true
-encoding=linear16
-channels=1
-sample_rate=16000
-language=en-US
-endpointing=300
-utterance_end_ms=1000
-vad_events=true
-```
-
-Its audio frames are 20 ms / 640 bytes, mono, 16-bit signed little-endian PCM at 16 kHz. See [Deepgram's streaming documentation](https://developers.deepgram.com/docs/live-streaming-audio) for the vendor protocol.
-
-## Filter behavior and concurrency
-
-- The STT adapter normalizes word text, start/end milliseconds, and finality into [WordEvent](apps/speech-filter-harness/src/stt/types.ts). A time-range hypothesis replaces overlapping interim words; duplicate finals do not append duplicate text. Vendor-specific events stop at this boundary.
-- Each new word updates the live region and candidate windows: recent suffixes of lengths 1…K, the current `startIndex`, and the region start, clipped to `WINDOW_MAX_WORDS` and any excluded ambient prefix. One Jev evaluation batches a Choice question (`directed`, `ambient`, `unclear`) and a Boolean question for each candidate.
-- Jev receives text/JSON state only. The AI SDK's `experimental_evaluate` uses an explicit Gateway evaluation model; no audio is sent to Jev and no direct TypeSafe request is available. The SDK uses Gateway's SDK protocol endpoint; the public HTTP equivalent is `/v1/evaluate`. See [Gateway evaluation](https://vercel.com/docs/ai-gateway/modalities/evaluation).
-- The gate requires Choice `directed` at or above `T_DIR_CONFIDENCE` **and** Boolean probability at or above `T_NOUL`. The earliest qualifying candidate sets `startIndex`. High-confidence ambient excludes that prefix; unclear/low-confidence holds without submitting.
-- STT callbacks never wait for Jev. There is at most one evaluator operation in progress; newer words cancel/supersede older work, retaining the latest pending input. The slot is released only once cancellation settles. A vendor update containing several new words is coalesced into its newest snapshot; the final residual words are also evaluated when profiling every 2–3 words. Region/sequence checks ignore stale results. A result for older words cannot authorize a newer transcript.
-- Debounce emits only `words[startIndex…last]`. Endpointing/`UtteranceEnd` or the region silence timeout closes the region; pending output remains subject to the full debounce and that region's latest gate. A sealed region's result can finish its own pending debounce, but cannot change a newer region. New speech cancels unfinished evaluation work, which can conservatively drop a prior region. Emission consumes the audio time range, preventing delayed corrections from submitting old words again. A new region starts with a fresh gate and index. Disconnection, malformed answers, timeouts, and evaluation errors hold closed.
-- A Gateway model switch closes the old stream and opens the selected model. Audio during an unavailable connection is discarded rather than replayed as fresh speech; disconnection clears eligibility and prevents submission. A terminal Gateway/provider error or an audio backlog exceeding one second stops capture: restart the stream after resolving the error. The optional Deepgram adapter reconnects with backoff from 250 ms up to 4 seconds. Jev retries a 429/5xx response once with jitter; other errors do not retry or fail open.
-
-`DownstreamModel.submit(FilteredSegment)` has only `ConsoleDownstream` and `MemoryQueueDownstream` implementations in this phase. No text can trigger external agent actions.
-
-## Fixtures and adapter extension
-
-[fixtures/ambient](apps/speech-filter-harness/fixtures/ambient) contains `mixed.json`, `ambient-only.json`, and `unclear.json`. The schema has `version: 1`, a `name`, `durationMs`, an ordered `events` array, and explicit `dryRun` labels. Transcript events carry the shared `WordEvent`:
-
-```json
-{
-  "atMs": 100,
-  "type": "transcript",
-  "event": {
-    "text": "Hello",
-    "startMs": 0,
-    "endMs": 100,
-    "isFinal": false,
-    "words": [{ "text": "Hello", "startMs": 0, "endMs": 100, "isFinal": false }]
-  }
-}
-```
-
-`atMs` is the replay delivery time. Word/event timestamps describe the audio stream and may repeat across interim revisions. Boundary events are `{ "atMs": 1200, "type": "boundary", "reason": "utterance_end" }`; connection events use `{ "atMs": 0, "type": "connection", "connected": true }`. Leave enough time in `durationMs` after the final words for the debounce. Files are validated before replay: ordered event times, word ranges, field types, and dry-run probabilities.
-
-`dryRun.rules` maps **exact candidate text** to explicit `addressing`, `directedProbability`, `ambientProbability`, and `isDirectedProbability` labels. Unmatched candidates use `dryRun.defaultDecision` (unclear in bundled fixtures). `dryRun.latencyMs` simulates evaluation delay for cancellation exercises. There is no keyword-based or wake-word classifier. Real Jev replay ignores these scripted labels.
-
-To swap STT, add an adapter under `src/stt/` that consumes PCM frames and implements the same callbacks: `onTranscript(WordEvent)`, `onBoundary(reason, lastWordEndMs?)`, and `onConnection(connected)`. Preserve word timestamps/finality, normalize revisable ranges, and reset stream timing/alignment when reconnecting. Wire the new adapter in `main.ts` and explicitly extend `STT_PROVIDER` validation in `config.ts`. Keep the shared filter and Gateway client unchanged; add vendor-fixture alignment and reconnect tests. Merely setting another provider name is intentionally rejected. Flux, AssemblyAI, and other dedicated realtime transcription adapters are future options, not implemented fallback providers.
-
-## Privacy and validation limits
-
-The microphone is always on while a mic stream runs and captures ambient conversations. Raw audio goes through Vercel AI Gateway to the selected STT model, or directly to Deepgram when that optional adapter is selected; transcript text and candidate windows go to Vercel AI Gateway/Jev. The Gateway key stays in the local Node server and is never sent to the browser. Console transcripts and queue data stay local unless you redirect or share them; visual mode also sends these events to the local browser. Audio is not recorded by the harness. JSON dry-run makes no cloud requests; its UI communicates only with the local server. Real fixture replay sends fixture text to Gateway. ZDR is an optional Jev routing request, not a claim about the STT provider's retention policy.
-
-Implementation was developed on Apple Silicon with Node 24.20.0 and Homebrew SoX 14.4.2 installed from bottles. Tests and the offline demo exercise the pipeline without credentials. Live microphone capture requires a connected input device and the macOS permission described above. The machine had no input device when inspected; successful offline tests do not replace a live microphone acceptance run.
-
-Validation includes actual CLI replay of all three fixtures, mocked Gateway transport and Deepgram sockets, cancellation/reconnect/debounce regression tests, and real SoX conversion of a generated stereo WAV into paced mono PCM. The bounded local microphone check produced zero samples and SoX's “can not open audio device” error for the default input. No audio was uploaded during that check.
-
-Live Gateway acceptance used a synthesized WAV saying “Hello assistant. Could you summarize my notes, please?” with only `AI_GATEWAY_API_KEY`. Both `openai/gpt-realtime-whisper` and `xai/grok-stt` returned the transcript, received a directed Jev decision, and emitted one chat submission with no Jev errors. A longer WAV switched OpenAI → xAI → OpenAI through the UI control endpoint while retaining one audio source, one filter session, and all chat history; transcription and submissions continued after both switches. Browser checks also verified model selection and independent Raw/Jev visibility during keyless fixture replay. This checks the live integration, not general classification accuracy or microphone hardware.
-
-| Architecture acceptance item | Status |
+| Raw speech | Chat output |
 | --- | --- |
-| Always-on mic → Gateway STT → visible partials | Implemented; microphone acceptance requires a connected input device and host-app permission |
-| Gateway STT + Jev on word updates, latency logs | Live synthesized-WAV acceptance passed for both models with one key; broader classification quality still requires ambient/directed examples |
-| Cancellation/stale ignore, one evaluate at a time | Regression-tested, including an uncancellable delayed result |
-| Sliding index, region reset, directed suffix only | Regression-tested; mixed CLI fixture emits only the expected suffix |
-| Confidence gate and 1–2 second debounce | Tested at defaults and the shorter debounce boundary; ambiguous/error results hold |
-| Reconnect and fail-closed behavior | Mocked disconnect/auth/malformed-response tests; audio during outages is dropped |
-| Visible feed/queue and downstream interface | Both console and bounded memory queue implemented; no real agent |
-| One-key setup, model switch, approximate timing, optional Deepgram | Live switching passed both directions without restarting capture; documented above |
+| “The television is still playing.” | Nothing |
+| “We already ate dinner. Could you summarize my notes?” | **Could you summarize my notes?** |
+| “Maybe later or perhaps tomorrow.” | Nothing |
 
-For live acceptance, start with `npm run stt`, then `npm run mic`: speak ambient conversation, a request addressed to the assistant after an ambient prefix, and an ambiguous fragment. Confirm that partials appear, Jev latencies/counters update, only the directed suffix reaches `queue_submit` after the quiet interval, and disconnects/errors never submit text. Stop at the console/queue stage until real ambient fixtures demonstrate acceptable filtering.
+The demo replays partial/final word events and substitutes explicit fixture labels for Jev. It exercises the real window, gate, debounce, and output path **without cloud requests**. It demonstrates plumbing, not model accuracy. It stays offline even if keys are configured. After dependencies are installed, no internet connection is needed.
+
+### Live: one Gateway key
+
+Microphone and WAV modes use **SoX**. On macOS, from the repo root:
+
+```sh
+brew install sox
+cp -n .env.example .env
+```
+
+Set this line in `.env` to your Vercel AI Gateway key:
+
+```dotenv
+AI_GATEWAY_API_KEY=your_gateway_key
+```
+
+Then start the live UI:
+
+```sh
+npm run mic -- --ui
+```
+
+Open the printed URL, click **Start mic**, and allow microphone access for the launching app (Terminal, iTerm, or Codex). The key must have access to the selected STT model and `typesafe-ai/jev`; no separate OpenAI, xAI, or TypeSafe key is needed. This is the live equivalent of the demo command: `demo:ui` includes fixture-only `--dry-run`, so use `mic -- --ui` for live input.
+
+Use the **STT model** selector to switch **OpenAI `gpt-realtime-whisper` ↔ xAI `grok-stt`**. OpenAI is the default. Switching reconnects STT while capture and chat history stay open; pending filter decisions are invalidated. Audio during reconnection is dropped, so expect a short transcript gap. In fixture mode, the selector only stores a preference for live input.
+
+Click **Stop** to end capture. **Ctrl+C** closes the server. Mic capture is continuous while a live run is active; there is no mute hotkey.
+
+<details>
+<summary>Microphone, port, or setup trouble?</summary>
+
+- Check `node --version`: the pinned SDKs require Node 22 or newer.
+- Select a working input in **System Settings → Sound → Input**. A Mac mini may need a USB microphone, headset, or display microphone.
+- Enable the launching app under **Privacy & Security → Microphone** if permission was denied, then restart the command.
+- If SoX is missing from PATH, set `SOX_PATH=/opt/homebrew/bin/sox` in `.env`. `sox -d -n stat` checks capture locally without keys; stop it with Ctrl+C.
+- Use `npm run stt` to inspect live STT before adding Jev. It still needs the Gateway key.
+- If port 3210 is busy, use `npm run demo:ui -- --port 3211`.
+- For a stream error, inspect the terminal diagnostics, resolve the key/model/input issue, and start again.
+
+</details>
+
+## Explore the UI
+
+![Demo UI panel map: model selector and independent Raw/Jev toggles above an always-visible Chat panel and two inspector panels.](docs/assets/ui-panel-map.svg)
+
+| Panel / control | What to look for |
+| --- | --- |
+| **A · Chat stream** — always visible | One timestamped bubble per `queue_submit`. Only the accepted `words[startIndex…]` suffix appears. |
+| **B · Raw transcript** — toggle **R** | Unfiltered partial/final text, including ambient words and STT revisions; active STT model in the header. |
+| **C · Jev / window / decision** — toggle **J** | Indexed words, excluded prefix, candidate probabilities, gate state, debounce, and in-flight/stale counters. |
+| **Evaluation history** | Revisit the directed window after the unclear region arrives; choose **Follow latest** to resume updates. |
+
+Raw and Jev start visible. Hiding either preserves its state and keeps processing. **Replay offline demo** clears the previous run and starts fresh. The UI serves bounded recent history over server-sent events from a local Node server at `127.0.0.1`; it has no external frontend assets.
+
+## How it works
+
+Ambient words still advance transcription. The boundary that matters is **submission to Chat**:
+
+```mermaid
+sequenceDiagram
+    participant S as Mic / Gateway STT
+    participant W as Window + gate
+    participant J as Jev via Gateway
+    participant C as Chat stream
+    Note over S,C: Illustrative evaluation snapshots using fixture text
+    S->>W: We already ate dinner. (words 0..3)
+    W->>J: Evaluate candidate suffixes
+    J-->>W: Ambient with confidence
+    Note over W: excludedBefore = 4<br/>startIndex = null
+    Note over W,C: Raw transcript advances<br/>no chat submission
+    S->>W: Could you summarize my notes? (words 4..8)
+    W->>J: Choice + Boolean for each candidate
+    J-->>W: Directed suffix passes both thresholds
+    Note over W: startIndex = 4<br/>wait for 1500 ms quiet
+    Note over W: Latest decision valid<br/>debounce fires
+    W->>C: Submit words[4..8] once
+    Note over C: One bubble: Could you summarize my notes?
+```
+
+### From sound to words
+
+**Sources.** [SoX capture](apps/speech-filter-harness/src/mic/sox.ts) supplies microphone audio or decodes/resamples a WAV and streams it at real-time pace. WAV mode doesn't play through speakers or use batch transcription. [JSON fixtures](apps/speech-filter-harness/fixtures/ambient) enter at the word-event boundary, bypassing audio and STT. Fixtures call real Jev unless `--dry-run` supplies scripted decisions (or `--stt-only` disables filtering).
+
+**Streaming STT.** The [Gateway adapter](apps/speech-filter-harness/src/stt/gateway.ts) uses AI SDK `experimental_streamTranscribe` with `gateway.transcriptionModel(...)`. Both `openai/gpt-realtime-whisper` and `xai/grok-stt` receive mono PCM16 at **24 kHz**, in 20 ms frames. These are text transcription models, not speech-to-speech voice agents. The existing Deepgram Nova-3 adapter is an optional comparison path for later work, enabled explicitly with `STT_PROVIDER=deepgram` and `DEEPGRAM_API_KEY`; it uses 16 kHz audio. It is not needed for the one-key path.
+
+**Normalization.** Every adapter produces the same [WordEvent](apps/speech-filter-harness/src/stt/types.ts): text, word start/end milliseconds, and finality. [Alignment](apps/speech-filter-harness/src/stt/alignment.ts) replaces overlapping interim hypotheses and deduplicates finals. Gateway word timing is synthesized from segment timing and submitted audio duration; it is approximate, not precise word alignment or speaker diarization.
+
+### From words to a directed span
+
+**Sliding window.** Each text update builds candidate suffixes of the latest **1…8 words**, plus the current `startIndex` and the available region start, bounded to **40 words** and any excluded prefix. Indices are zero-based within the region. A confident ambient result advances `excludedBefore` and clears `startIndex`; an eligible directed result sets `startIndex` to the earliest qualifying candidate. In the example, words 0–3 are excluded and the request starts at **4**. This trims a prefix; it doesn't extract arbitrary disconnected phrases.
+
+**Jev, through Gateway only.** The [Jev client](apps/speech-filter-harness/src/jev/client.ts) uses `experimental_evaluate` and `gateway.evaluationModel('typesafe-ai/jev')`. One request batches a **Choice** (`directed`, `ambient`, `unclear`) and a **Boolean** (`is_directed`) for every candidate. Jev sees text/JSON context, never raw audio. There is no direct TypeSafe API path.
+
+**Gate and debounce.** A candidate must be labeled `directed`, with Choice probability **≥ 0.6** and Boolean probability **≥ 0.6**. The default **1500 ms** quiet interval must also elapse. A text revision revokes eligibility until its own evaluation passes; the latest matching decision must authorize the exact submitted span. Ambient is excluded, unclear/low confidence holds, and disconnection, malformed answers, errors, or timeouts **fail closed**. A pause alone cannot submit text.
+
+**Regions and output.** Endpoint/final boundaries or the default 1500 ms silence timeout close a region without skipping its debounce. A sealed region may finish its own pending evaluation; a new region starts with fresh gate/index state. Submission consumes the audio time range so delayed corrections can't submit it again. [DownstreamModel](apps/speech-filter-harness/src/downstream/types.ts) currently has console and bounded memory-queue implementations only. Chat displays those submitted segments, never raw STT previews.
+
+### Keeping up with speech
+
+STT callbacks never wait for Jev. The [controller](apps/speech-filter-harness/src/filter/controller.ts) permits **one evaluator operation at a time**. New words cancel/supersede older work and retain only the latest pending snapshot; the slot stays occupied until cancellation settles. Region and sequence checks ignore stale results, so an older decision cannot authorize newer text. Multiple words in one STT update are coalesced. New speech can conservatively drop unfinished work from a prior region.
+
+The decision panel and logs expose `jev_inflight_dropped`, `jev_stale_ignored`, and evaluation latency. Jev retries a 429/5xx once within a **4-second total deadline**. A terminal Gateway error or audio backlog over one second stops capture; restart after resolving it. The optional Deepgram adapter reconnects with backoff. Neither path submits while disconnected.
+
+## Commands and configuration
+
+Run from the repo root. `.env` loads automatically; exported environment variables take precedence.
+
+| Command | What runs | Key |
+| --- | --- | --- |
+| `npm run demo:ui` | Offline visual demo | None |
+| `npm run demo` | Same offline scenario as JSON console output | None |
+| `npm run fixture -- --ui` | Fixture words + real Jev | Gateway |
+| `npm run mic -- --ui` | Microphone + live STT + real Jev | Gateway |
+| `npm run stt -- --ui` | Microphone + live STT; Jev/Chat idle | Gateway |
+| `npm run wav -- --file recordings/example.wav --ui` | WAV + live STT + real Jev | Gateway |
+| `npm run check` | Typecheck, regression tests, production build | None |
+
+Remove `--ui` from live commands for console output. `npm run ui` aliases the offline visual demo. Use `--downstream queue` for the in-memory queue (up to 1,000 segments; lost on exit). `npm run dev -- --help` lists all CLI options.
+
+[.env.example](.env.example) lists every setting. The main controls are:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `STT_MODEL` | `openai/gpt-realtime-whisper` | Choose this or `xai/grok-stt`; also selectable in the UI |
+| `JEV_EVERY_N_WORDS` | `1` | Evaluate on updates; use `2` or `3` for profiling |
+| `K` / `WINDOW_MAX_WORDS` | `8` / `40` | Candidate suffix lengths / maximum window |
+| `T_DIR_CONFIDENCE` / `T_NOUL` | `0.6` / `0.6` | Choice / Boolean thresholds |
+| `DEBOUNCE_MS` | `1500` | Quiet interval, allowed range 1000–2000 ms |
+| `REGION_SILENCE_MS` | `1500` | Region closure, allowed range 1500–2000 ms |
+| `JEV_TIMEOUT_MS` | `4000` | Total evaluation deadline, including retry |
+
+`--stt-model xai/grok-stt` overrides `STT_MODEL` and selects Gateway, even if an old `.env` selects Deepgram. A Deepgram selection without its key also falls back to Gateway. `JEV_MODEL` is fixed to `typesafe-ai/jev`.
+
+To replay another offline case:
+
+```sh
+npm run fixture -- --file apps/speech-filter-harness/fixtures/ambient/ambient-only.json --dry-run --ui
+```
+
+The bundled `ambient-only.json` and `unclear.json` emit zero segments. Keep replay speed at its default `1` when comparing expected outputs: `--speed` changes event pacing, not debounce or model deadlines.
+
+## Privacy and Phase 0 scope
+
+**Always-on means ambient audio is captured too.** During a live mic run, audio goes through Vercel AI Gateway to the selected STT provider (directly to Deepgram if explicitly selected). Transcript context and candidates go to Jev through Gateway, including words that never enter Chat. Filtering agent input is not a local-only privacy boundary.
+
+The harness does not record audio. Transcripts appear in the local console/browser; redirecting or sharing logs can retain them. The Gateway key stays in the local Node server, never the browser. Keep secrets in ignored `.env` and private audio in ignored `recordings/`. Offline dry-run makes no cloud requests; real fixture evaluation sends fixture text to Gateway. `GATEWAY_ZERO_DATA_RETENTION=true` requests Jev routing with zero data retention; it makes no claim about STT retention.
+
+Phase 0 stops at a visible text feed. **No real agent, tool execution, TTS, speech-to-speech conversation, barge-in UX, or primary wake-word gate.** Scripted demos and transport tests do not establish classification accuracy. Validate live ambient, directed, and ambiguous speech before connecting any agent.
+
+## Work on Jevis
+
+- Read [ARCHITECTURE.md](ARCHITECTURE.md) for the build spec and acceptance criteria.
+- Agents changing Jev prompts, question shapes, or Gateway wiring must first read the vendored [TypeSafe skill](skills/typesafe-ai/SKILL.md) and [project skill guidance](skills/README.md). The project always routes Jev through Gateway.
+- Start in [`apps/speech-filter-harness/src`](apps/speech-filter-harness/src): `stt/` normalizes speech, `filter/` controls eligibility, `jev/` evaluates candidates, and `ui/` renders telemetry.
+- To add an STT adapter, implement the [SttAdapter contract](apps/speech-filter-harness/src/stt/session.ts), emit normalized word/boundary/connection callbacks, and wire provider selection in `main.ts` and `config.ts`. Add alignment/reconnect tests before using it with the filter.
+- Run `npm run check` before proposing a change. The suite covers fixture replay, transport mocks, alignment, cancellation, debounce, fail-closed behavior, UI controls, and SoX WAV conversion when SoX is installed.
+- Visuals are local and reproducible: [asset sources and generation instructions](docs/assets/README.md). The Mermaid sources are [pipeline.mmd](docs/assets/pipeline.mmd) and [ambient-directed.mmd](docs/assets/ambient-directed.mmd).
